@@ -75,7 +75,7 @@ const AuthPage: React.FC = () => {
       }
       navigate('/dashboard');
     } catch (err: any) {
-      setError(err?.response?.data?.message || 'Authentication failed. Please check your credentials.');
+      setError(err?.response?.data?.error || err?.response?.data?.message || 'Authentication failed. Please check your credentials.');
     } finally {
       setSubmitting(false);
     }
@@ -379,9 +379,18 @@ const AuthPage: React.FC = () => {
               </button>
             </form>
 
-            <div className="p-3.5 rounded-xl bg-slate-950/60 border border-slate-800 text-center">
-              <span className="text-[11px] text-slate-400">
-                Quick Demo Access: <code className="text-blue-400 font-mono">demo@collabspace.io</code> / <code className="text-blue-400 font-mono">CollabSpace123</code>
+            <div
+              onClick={() => {
+                setMode('login');
+                setIdentifier('demo@collabspace.io');
+                setPassword('CollabSpace123');
+                setError('');
+              }}
+              className="p-3 rounded-xl bg-slate-950/60 border border-slate-800 text-center cursor-pointer hover:border-blue-500/50 hover:bg-slate-900/60 transition group"
+              title="Click to auto-fill demo credentials"
+            >
+              <span className="text-[11px] text-slate-400 group-hover:text-slate-300">
+                Quick Demo (Click to autofill): <code className="text-blue-400 font-mono">demo@collabspace.io</code> / <code className="text-blue-400 font-mono">CollabSpace123</code>
               </span>
             </div>
           </div>
