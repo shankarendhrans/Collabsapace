@@ -1514,7 +1514,7 @@
       const originalText = btnSubmit ? btnSubmit.innerHTML : "";
       if (btnSubmit) {
         btnSubmit.disabled = true;
-        btnSubmit.innerHTML = `<span>Saving to MongoDB Atlas...</span>`;
+        btnSubmit.innerHTML = `<span>Saving to MongoDB Atlas (waking server)...</span>`;
       }
 
       let backendUser = null;
@@ -1535,13 +1535,15 @@
         backendUser = data.user;
         token = data.token;
       } catch (networkErr) {
-        console.warn("[CollabSpace] Backend registration offline, fallback to local storage:", networkErr);
+        console.warn("[CollabSpace] Backend registration offline, attempting fallback:", networkErr);
+        if (btnSubmit) { btnSubmit.disabled = false; btnSubmit.innerHTML = originalText; }
+        return showAuthFeedback("Cloud database server is waking up (Render free tier). Please wait 15-20 seconds and click Create Account again.");
       }
 
       // 2. Keep local mirror for instantaneous offline operations
       const users = getUsersDB();
       const passwordHash = await hashPassword(password, email);
-      const userId = backendUser?.id || backendUser?._id || ("usr_" + Date.now());
+      const userId = backendUser?.id || backendUser?._id;
       const newUser = { id: userId, fullName, email, username, passwordHash, token, createdAt: new Date().toISOString() };
       const existingIdx = users.findIndex(u => u.email === email || u.username === username);
       if (existingIdx >= 0) {
@@ -1556,7 +1558,7 @@
       if (token) localStorage.setItem("collabspace_token", token);
 
       if (btnSubmit) { btnSubmit.disabled = false; btnSubmit.innerHTML = originalText; }
-      showToast(`Account created & saved in MongoDB! Welcome, ${fullName}!`);
+      showToast(`Account successfully created & saved in MongoDB Atlas! Welcome, ${fullName}!`);
       const pendingRoomReg = localStorage.getItem("cs_pending_room");
       if (pendingRoomReg) {
         localStorage.removeItem("cs_pending_room");
