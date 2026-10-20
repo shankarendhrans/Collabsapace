@@ -14,7 +14,7 @@ const upload = multer({
 
 router.post("/import/:roomId", requireAuth, upload.single("file"), async (req: AuthRequest, res: Response) => {
   try {
-    const file = req.file;
+    const file = (req as any).file;
     if (!file) {
       res.status(400).json({ error: "No file uploaded." });
       return;
@@ -28,13 +28,13 @@ router.post("/import/:roomId", requireAuth, upload.single("file"), async (req: A
       const text = file.buffer.toString("utf-8");
       extractedHtml = text
         .split(/\r?\n\r?\n/)
-        .map((p) => `<p>${sanitizeHtml(p).replace(/\r?\n/g, "<br/>")}</p>`)
+        .map((p: string) => `<p>${sanitizeHtml(p).replace(/\r?\n/g, "<br/>")}</p>`)
         .join("");
     } else if (ext === "md") {
       const md = file.buffer.toString("utf-8");
       extractedHtml = md
         .split(/\r?\n/)
-        .map((line) => {
+        .map((line: string) => {
           if (line.startsWith("### ")) return `<h3>${sanitizeHtml(line.slice(4))}</h3>`;
           if (line.startsWith("## ")) return `<h2>${sanitizeHtml(line.slice(3))}</h2>`;
           if (line.startsWith("# ")) return `<h1>${sanitizeHtml(line.slice(2))}</h1>`;
@@ -67,8 +67,8 @@ router.post("/import/:roomId", requireAuth, upload.single("file"), async (req: A
         .replace(/[{}]/g, "");
       extractedHtml = stripped
         .split(/\n+/)
-        .filter((l) => l.trim())
-        .map((l) => `<p>${sanitizeHtml(l.trim())}</p>`)
+        .filter((l: string) => l.trim())
+        .map((l: string) => `<p>${sanitizeHtml(l.trim())}</p>`)
         .join("");
     } else {
       res.status(415).json({

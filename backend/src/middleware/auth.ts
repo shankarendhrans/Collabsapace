@@ -8,6 +8,7 @@ export interface AuthRequest extends Request {
     fullName: string;
     username: string;
   };
+  file?: Express.Multer.File;
 }
 
 export function requireAuth(req: AuthRequest, res: Response, next: NextFunction): void {
