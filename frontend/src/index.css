@@ -1,0 +1,43 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg-primary: #f8fafc;
+  --bg-surface: #ffffff;
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --accent-color: #2563eb;
+  --border-color: #e2e8f0;
+}
+
+[data-theme="dark"] {
+  --bg-primary: #0f172a;
+  --bg-surface: #1e293b;
+  --text-primary: #f8fafc;
+  --text-secondary: #94a3b8;
+  --accent-color: #3b82f6;
+  --border-color: #334155;
+}
+
+[data-theme="color"] {
+  --bg-primary: #f5f3ff;
+  --bg-surface: #ffffff;
+  --text-primary: #1e1b4b;
+  --text-secondary: #4c1d95;
+  --accent-color: #7c3aed;
+  --border-color: #ddd6fe;
+}
+
+body {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+.ProseMirror {
+  min-height: 560px;
+  outline: none;
+  line-height: 1.75;
+}

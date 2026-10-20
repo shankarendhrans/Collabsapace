@@ -1,0 +1,3020 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CollabSpace — Real-Time Collaborative Editor, File Projector &amp; Live Sketch Studio</title>
+  <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js" crossorigin="anonymous"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js" crossorigin="anonymous"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js" crossorigin="anonymous"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&family=Merriweather:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet" />
+  <style>
+    :root, [data-theme="light"] {
+      --bg-app: #f8fafc;
+      --bg-surface: #ffffff;
+      --bg-subtle: #f1f5f9;
+      --bg-hover: #e2e8f0;
+      --text-main: #0f172a;
+      --text-muted: #475569;
+      --border-main: #e2e8f0;
+      --accent: #2563eb;
+      --accent-hover: #1d4ed8;
+      --accent-soft: rgba(37, 99, 235, 0.1);
+      --editor-paper: #ffffff;
+      --editor-text: #0f172a;
+    }
+
+    [data-theme="dark"] {
+      --bg-app: #0b0f19;
+      --bg-surface: #111827;
+      --bg-subtle: #1e293b;
+      --bg-hover: #334155;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --border-main: #1e293b;
+      --accent: #3b82f6;
+      --accent-hover: #2563eb;
+      --accent-soft: rgba(59, 130, 246, 0.15);
+      --editor-paper: #1e293b;
+      --editor-text: #f8fafc;
+    }
+
+    body {
+      background-color: var(--bg-app);
+      color: var(--text-main);
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      transition: background-color 0.2s ease, color 0.2s ease;
+      overflow-x: hidden;
+    }
+
+    .theme-surface {
+      background-color: var(--bg-surface);
+      border-color: var(--border-main);
+      color: var(--text-main);
+    }
+
+    .theme-subtle {
+      background-color: var(--bg-subtle);
+      border-color: var(--border-main);
+      color: var(--text-main);
+    }
+
+    .theme-muted {
+      color: var(--text-muted);
+    }
+
+    .theme-border {
+      border-color: var(--border-main);
+    }
+
+    .btn-accent {
+      background-color: var(--accent);
+      color: #ffffff;
+    }
+    .btn-accent:hover {
+      background-color: var(--accent-hover);
+    }
+
+    .editor-paper {
+      background-color: var(--editor-paper);
+      color: var(--editor-text);
+      min-height: 640px;
+      line-height: 1.75;
+      outline: none;
+      box-shadow: 0 10px 30px -10px rgba(15, 23, 42, 0.08);
+    }
+
+    .editor-paper h1 { font-size: 2rem; font-weight: 800; margin: 0.75rem 0 0.5rem; line-height: 1.25; }
+    .editor-paper h2 { font-size: 1.5rem; font-weight: 700; margin: 0.7rem 0 0.45rem; line-height: 1.3; }
+    .editor-paper h3 { font-size: 1.25rem; font-weight: 600; margin: 0.6rem 0 0.4rem; }
+    .editor-paper p { margin: 0.5rem 0; }
+    .editor-paper ul { list-style-type: disc; padding-left: 1.75rem; margin: 0.5rem 0; }
+    .editor-paper ol { list-style-type: decimal; padding-left: 1.75rem; margin: 0.5rem 0; }
+    .editor-paper table { width: 100%; border-collapse: collapse; margin: 1rem 0; }
+    .editor-paper th, .editor-paper td { border: 1px solid var(--border-main); padding: 0.5rem 0.75rem; }
+    .editor-paper blockquote {
+      border-left: 4px solid var(--accent);
+      padding-left: 1rem;
+      margin: 0.75rem 0;
+      font-style: italic;
+      opacity: 0.9;
+    }
+    .editor-paper a { color: #2563eb; text-decoration: underline; }
+    .editor-paper img { max-width: 100%; height: auto; border-radius: 0.75rem; margin: 0.75rem 0; }
+    .editor-paper pre {
+      background: #0f172a;
+      color: #f8fafc;
+      padding: 0.85rem 1rem;
+      border-radius: 0.5rem;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.85rem;
+      overflow-x: auto;
+    }
+
+    /* Projected Reference Sheet Styling */
+    .projected-sheet {
+      background: #ffffff;
+      color: #0f172a;
+      box-shadow: 0 12px 32px -8px rgba(15, 23, 42, 0.18);
+      border-radius: 0.75rem;
+    }
+    .projected-sheet table { width: 100%; border-collapse: collapse; margin: 0.75rem 0; }
+    .projected-sheet th, .projected-sheet td { border: 1px solid #cbd5e1; padding: 0.5rem 0.75rem; }
+    .projected-sheet h1 { font-size: 1.85rem; font-weight: 800; margin-bottom: 0.5rem; color: #0f172a; }
+    .projected-sheet h2 { font-size: 1.4rem; font-weight: 700; margin-top: 1rem; margin-bottom: 0.4rem; color: #1e293b; }
+    .projected-sheet h3 { font-size: 1.15rem; font-weight: 600; margin-top: 0.75rem; color: #334155; }
+    .projected-sheet p { margin: 0.5rem 0; line-height: 1.7; }
+    .projected-sheet ul { list-style: disc; padding-left: 1.5rem; margin: 0.5rem 0; }
+    .projected-sheet ol { list-style: decimal; padding-left: 1.5rem; margin: 0.5rem 0; }
+
+    .toolbar-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 2rem;
+      height: 2rem;
+      padding: 0 0.4rem;
+      border-radius: 0.5rem;
+      transition: all 0.15s ease;
+    }
+    .toolbar-btn:hover {
+      background-color: var(--bg-hover);
+    }
+    .toolbar-btn.active {
+      background-color: var(--accent);
+      color: #ffffff;
+      font-weight: 600;
+    }
+
+    .sketch-cursor-active {
+      cursor: crosshair !important;
+    }
+
+    @keyframes fadeSlideUp {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .animate-fade-up {
+      animation: fadeSlideUp 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col relative overflow-x-hidden">
+
+  <!-- Full-Page Interactive CrystalizedBall Background -->
+  <div id="crystalizedBallBackground" class="fixed inset-0 w-full h-full pointer-events-none z-0 overflow-hidden opacity-90 dark:opacity-95 transition-opacity duration-700"></div>
+
+  <!-- ===================================================================== -->
+  <!-- PAGE 1: AUTHENTICATION (LOGIN / REGISTRATION / PASSWORD RESET)        -->
+  <!-- ===================================================================== -->
+  <section id="pageAuth" class="min-h-screen flex flex-col justify-between py-8 px-4 sm:px-6 lg:px-8 relative z-10">
+    <div class="max-w-6xl w-full mx-auto flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl btn-accent flex items-center justify-center shadow-md font-extrabold text-white text-lg">
+          CS
+        </div>
+        <div>
+          <span class="font-bold text-lg tracking-tight">CollabSpace</span>
+          <span class="hidden sm:inline-block ml-2 text-xs px-2.5 py-0.5 rounded-full theme-subtle font-medium">
+            v3.0 Live Editor • File Projector • Paint &amp; Sketch Studio
+          </span>
+        </div>
+      </div>
+
+      <!-- Preset Selector Pill for Background Ball -->
+      <div class="hidden sm:flex items-center gap-1 theme-subtle p-1 rounded-xl border theme-border text-xs mr-2" id="ballPresetControls">
+        <span class="text-[10px] font-bold uppercase tracking-wider px-2 theme-muted">Cosmic Core:</span>
+        <button type="button" data-ball-preset="plasma" class="ball-preset-btn px-2.5 py-1 rounded-lg text-xs font-semibold btn-accent shadow-sm transition">Plasma</button>
+        <button type="button" data-ball-preset="aurora" class="ball-preset-btn px-2.5 py-1 rounded-lg text-xs font-semibold theme-subtle theme-muted hover:opacity-100 transition">Aurora</button>
+        <button type="button" data-ball-preset="nebula" class="ball-preset-btn px-2.5 py-1 rounded-lg text-xs font-semibold theme-subtle theme-muted hover:opacity-100 transition">Nebula</button>
+        <button type="button" data-ball-preset="solar" class="ball-preset-btn px-2.5 py-1 rounded-lg text-xs font-semibold theme-subtle theme-muted hover:opacity-100 transition">Solar</button>
+        <button type="button" data-ball-preset="ember" class="ball-preset-btn px-2.5 py-1 rounded-lg text-xs font-semibold theme-subtle theme-muted hover:opacity-100 transition">Ember</button>
+        <button type="button" data-ball-preset="abyss" class="ball-preset-btn px-2.5 py-1 rounded-lg text-xs font-semibold theme-subtle theme-muted hover:opacity-100 transition">Abyss</button>
+      </div>
+
+      <!-- Theme Switcher: ONLY Light & Dark (Color Removed) -->
+      <div class="flex items-center gap-2">
+        <button type="button" data-set-theme="light" class="theme-pill px-3 py-1.5 rounded-lg text-xs font-medium border theme-border theme-surface">
+          <svg class="w-3.5 h-3.5 inline mr-1 text-amber-500" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg> Light
+        </button>
+        <button type="button" data-set-theme="dark" class="theme-pill px-3 py-1.5 rounded-lg text-xs font-medium border theme-border theme-surface">
+          <svg class="w-3.5 h-3.5 inline mr-1 text-indigo-400" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg> Dark
+        </button>
+      </div>
+    </div>
+
+    <div class="max-w-5xl w-full mx-auto my-8 grid grid-cols-1 lg:grid-cols-12 gap-8 items-center animate-fade-up">
+      <div class="lg:col-span-6 space-y-6">
+        <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold" style="background: var(--accent-soft); color: var(--accent);">
+          <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+          Real-Time Yjs / CRDT + Visual File Projector &amp; Paint Sketch
+        </div>
+        <h1 class="text-3xl sm:text-4xl font-extrabold tracking-tight leading-tight">
+          Project documents, draw live with your cursor, and take notes side by side.
+        </h1>
+        <p class="text-sm sm:text-base theme-muted leading-relaxed">
+          Upload any PDF, Word (.docx), HTML, Markdown, or image file to project its full visual layout onto the **Reference Projector Page** while taking live collaborative notes and drawing/marking directly over the screen with the **Paint &amp; Sketch** toolkit.
+        </p>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3.5 pt-2">
+          <div class="p-3.5 rounded-xl border theme-surface shadow-sm flex items-start gap-3">
+            <div class="p-2 rounded-xl bg-blue-500/10 shrink-0"><svg class="w-5 h-5 text-blue-500" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg></div>
+            <div>
+              <div class="text-xs font-bold">Full-Format File Projector</div>
+              <p class="text-xs theme-muted mt-0.5">Uploaded PDFs &amp; docs open in a dedicated Reference Page with exact visual layout preserved.</p>
+            </div>
+          </div>
+          <div class="p-3.5 rounded-xl border theme-surface shadow-sm flex items-start gap-3">
+            <div class="p-2 rounded-xl bg-purple-500/10 shrink-0"><svg class="w-5 h-5 text-purple-500" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg></div>
+            <div>
+              <div class="text-xs font-bold">Live Paint &amp; Cursor Sketch</div>
+              <p class="text-xs theme-muted mt-0.5">Draw, circle, underline, add arrows, or sketch on a whiteboard or directly over documents.</p>
+            </div>
+          </div>
+          <div class="p-3.5 rounded-xl border theme-surface shadow-sm flex items-start gap-3">
+            <div class="p-2 rounded-xl bg-emerald-500/10 shrink-0"><svg class="w-5 h-5 text-emerald-500" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></div>
+            <div>
+              <div class="text-xs font-bold">Teaching Split-Screen Mode</div>
+              <p class="text-xs theme-muted mt-0.5">View your projected reference file on one side while writing notes on the other.</p>
+            </div>
+          </div>
+          <div class="p-3.5 rounded-xl border theme-surface shadow-sm flex items-start gap-3">
+            <div class="p-2 rounded-xl bg-amber-500/10 shrink-0"><svg class="w-5 h-5 text-amber-500" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg></div>
+            <div>
+              <div class="text-xs font-bold">Instant Export</div>
+              <p class="text-xs theme-muted mt-0.5">Download notes and sketches as .docx, .pdf, .html, .md, or .txt.</p>
+            </div>
+          </div>
+        </div>
+
+        
+
+      </div>
+
+      <!-- Right Authentication Form Card -->
+      <div class="lg:col-span-6">
+        <div class="theme-surface border rounded-2xl shadow-xl p-6 sm:p-8 space-y-5">
+          <div class="flex rounded-xl theme-subtle p-1 border theme-border">
+            <button id="authTabLogin" type="button" class="flex-1 py-2 rounded-lg text-xs sm:text-sm font-semibold transition btn-accent shadow-sm">
+              Log In
+            </button>
+            <button id="authTabRegister" type="button" class="flex-1 py-2 rounded-lg text-xs sm:text-sm font-semibold transition theme-muted">
+              Register Account
+            </button>
+            <button id="authTabReset" type="button" class="px-3 py-2 rounded-lg text-xs font-medium transition theme-muted">
+              Reset Password
+            </button>
+          </div>
+
+          <div id="authFeedbackBox" class="hidden p-3 rounded-xl text-xs font-medium border"></div>
+
+          <!-- LOGIN FORM -->
+          <form id="formLogin" class="space-y-4">
+            <div>
+              <label for="loginIdentifier" class="block text-xs font-semibold mb-1">Email or Username</label>
+              <input id="loginIdentifier" type="text" required autocomplete="username" placeholder="e.g. demo@collabspace.io or alex" class="w-full px-3.5 py-2.5 rounded-xl border theme-border theme-surface text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+
+            <div>
+              <div class="flex items-center justify-between mb-1">
+                <label for="loginPassword" class="block text-xs font-semibold">Password</label>
+                <button type="button" id="btnSwitchToReset" class="text-xs text-blue-600 hover:underline">Forgot password?</button>
+              </div>
+              <div class="relative">
+                <input id="loginPassword" type="password" required autocomplete="current-password" placeholder="Enter your password" class="w-full pl-3.5 pr-16 py-2.5 rounded-xl border theme-border theme-surface text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                <button type="button" id="btnToggleLoginPwd" class="absolute right-3 top-2.5 text-xs font-semibold theme-muted hover:underline">
+                  Show
+                </button>
+              </div>
+            </div>
+
+            <div class="flex items-center justify-between text-xs">
+              <label class="flex items-center gap-2 cursor-pointer theme-muted">
+                <input id="loginRemember" type="checkbox" checked class="rounded border-slate-300 text-blue-600" />
+                Remember my session on this device
+              </label>
+            </div>
+
+            <button id="btnLoginSubmit" type="submit" class="w-full py-2.5 px-4 rounded-xl btn-accent font-semibold text-sm shadow-md transition flex items-center justify-center gap-2">
+              <span>Sign In to Dashboard</span>
+            </button>
+
+            <div class="pt-2 border-t theme-border flex items-center justify-between text-xs theme-muted">
+              <span>Need an account first?</span>
+              <button type="button" id="linkToRegister" class="font-semibold text-blue-600 hover:underline">
+                Create a new account &rarr;
+              </button>
+            </div>
+          </form>
+
+          <!-- REGISTRATION FORM -->
+          <form id="formRegister" class="hidden space-y-3.5">
+            <div>
+              <label for="regFullName" class="block text-xs font-semibold mb-1">Full Name</label>
+              <input id="regFullName" type="text" required placeholder="Ada Lovelace" class="w-full px-3.5 py-2 rounded-xl border theme-border theme-surface text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label for="regEmail" class="block text-xs font-semibold mb-1">Email Address</label>
+                <input id="regEmail" type="email" required placeholder="ada@collabspace.io" class="w-full px-3.5 py-2 rounded-xl border theme-border theme-surface text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              </div>
+              <div>
+                <label for="regUsername" class="block text-xs font-semibold mb-1">Username</label>
+                <input id="regUsername" type="text" required placeholder="adalovelace" class="w-full px-3.5 py-2 rounded-xl border theme-border theme-surface text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label for="regPassword" class="block text-xs font-semibold mb-1">Password (min 8 chars)</label>
+                <div class="relative">
+                  <input id="regPassword" type="password" required placeholder="••••••••" class="w-full pl-3.5 pr-14 py-2 rounded-xl border theme-border theme-surface text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                  <button type="button" id="btnToggleRegPwd" class="absolute right-2.5 top-2 text-xs font-semibold theme-muted">
+                    Show
+                  </button>
+                </div>
+              </div>
+              <div>
+                <label for="regConfirmPassword" class="block text-xs font-semibold mb-1">Confirm Password</label>
+                <input id="regConfirmPassword" type="password" required placeholder="••••••••" class="w-full px-3.5 py-2 rounded-xl border theme-border theme-surface text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              </div>
+            </div>
+
+            <div class="space-y-1">
+              <div class="h-1.5 w-full rounded-full bg-slate-200 overflow-hidden">
+                <div id="pwdStrengthBar" class="h-full w-0 bg-emerald-500 transition-all"></div>
+              </div>
+              <p id="pwdStrengthLabel" class="text-[11px] theme-muted">
+                Use 8+ characters with letters and numbers. Passwords are salted &amp; SHA-256 hashed before storage.
+              </p>
+            </div>
+
+            <button id="btnRegisterSubmit" type="submit" class="w-full py-2.5 px-4 rounded-xl btn-accent font-semibold text-sm shadow-md transition">
+              Register &amp; Open Dashboard
+            </button>
+
+            <div class="pt-2 border-t theme-border flex items-center justify-between text-xs theme-muted">
+              <span>Already registered?</span>
+              <button type="button" id="linkToLogin" class="font-semibold text-blue-600 hover:underline">
+                Back to Log In &rarr;
+              </button>
+            </div>
+          </form>
+
+          <!-- PASSWORD RESET FORM -->
+          <form id="formReset" class="hidden space-y-4">
+            <p class="text-xs theme-muted">
+              Enter your registered email or username and set a new password for your account.
+            </p>
+            <div>
+              <label for="resetIdentifier" class="block text-xs font-semibold mb-1">Registered Email or Username</label>
+              <input id="resetIdentifier" type="text" required placeholder="you@collabspace.io" class="w-full px-3.5 py-2 rounded-xl border theme-border theme-surface text-sm" />
+            </div>
+            <div>
+              <label for="resetNewPassword" class="block text-xs font-semibold mb-1">New Password (min 8 chars)</label>
+              <input id="resetNewPassword" type="password" required placeholder="New secure password" class="w-full px-3.5 py-2 rounded-xl border theme-border theme-surface text-sm" />
+            </div>
+            <button type="submit" class="w-full py-2.5 px-4 rounded-xl btn-accent font-semibold text-sm shadow-md transition">
+              Update Password
+            </button>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <footer class="max-w-6xl w-full mx-auto text-center text-xs theme-muted pt-4 border-t theme-border">
+      CollabSpace Collaborative Document Platform • React + TypeScript + TipTap + Node/Express + MongoDB + Yjs CRDT Architecture
+    </footer>
+  </section>
+
+  <!-- ===================================================================== -->
+  <!-- PAGE 2: DASHBOARD, ROOM MANAGEMENT & SYSTEM ARCHITECTURE              -->
+  <!-- ===================================================================== -->
+  <section id="pageDashboard" class="hidden min-h-screen flex flex-col relative z-10">
+    <header class="sticky top-0 z-30 theme-surface border-b theme-border backdrop-blur-md bg-opacity-95">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 py-3.5 flex flex-wrap items-center justify-between gap-3">
+        <div class="flex items-center gap-3">
+          <div class="w-9 h-9 rounded-xl btn-accent flex items-center justify-center font-extrabold text-white shadow-sm">
+            CS
+          </div>
+          <div>
+            <div class="flex items-center gap-2">
+              <span class="font-bold text-base">CollabSpace</span>
+              <span class="text-[11px] px-2 py-0.5 rounded-full font-semibold" style="background: var(--accent-soft); color: var(--accent);">
+                Dashboard
+              </span>
+            </div>
+            <p class="text-[11px] theme-muted hidden sm:block">Real-Time Collaborative Workspace &amp; Room Manager</p>
+          </div>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-2.5">
+          <!-- Theme Selector: ONLY Light & Dark -->
+          <div class="flex items-center gap-1 theme-subtle p-1 rounded-xl border theme-border text-xs">
+            <button type="button" data-set-theme="light" class="theme-pill px-2.5 py-1 rounded-lg font-medium"><svg class="w-3.5 h-3.5 inline mr-1 text-amber-500" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg> Light</button>
+            <button type="button" data-set-theme="dark" class="theme-pill px-2.5 py-1 rounded-lg font-medium"><svg class="w-3.5 h-3.5 inline mr-1 text-indigo-400" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg> Dark</button>
+          </div>
+
+          <button id="btnOpenRepoModal" type="button" class="px-3 py-1.5 rounded-xl border theme-border theme-surface text-xs font-semibold hover:opacity-90">
+            <svg class="w-3.5 h-3.5 inline mr-1 text-blue-500" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="m7.5 4.27 9 5.15"/><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg> Full-Stack Source (React + Node)
+          </button>
+
+          <div class="flex items-center gap-2 pl-2 border-l theme-border">
+            <div id="dashUserAvatar" class="w-8 h-8 rounded-full btn-accent text-white font-bold text-xs flex items-center justify-center">
+              U
+            </div>
+            <div class="hidden sm:block text-left">
+              <div id="dashUserName" class="text-xs font-bold leading-none">User</div>
+              <div id="dashUserEmail" class="text-[11px] theme-muted">user@collabspace.io</div>
+            </div>
+            <button id="btnDashLogout" type="button" class="ml-1 px-2.5 py-1.5 rounded-lg border theme-border text-xs font-semibold hover:bg-red-50 hover:text-red-600 transition">
+              Logout
+            </button>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-8 space-y-12 animate-fade-up">
+      <div class="p-6 sm:p-8 rounded-2xl border theme-surface shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
+        <div class="space-y-2 max-w-2xl">
+          <div class="inline-flex items-center gap-2 text-xs font-semibold px-2.5 py-1 rounded-full" style="background: var(--accent-soft); color: var(--accent);">
+            <span><svg class="w-3.5 h-3.5 inline mr-1 text-amber-400" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/></svg> Collaborative Document, Projector &amp; Live Sketch Studio</span>
+          </div>
+          <h1 class="text-2xl sm:text-3xl font-extrabold tracking-tight">
+            Welcome back, <span id="welcomeUserName">Collaborator</span>!
+          </h1>
+          <p class="text-sm theme-muted leading-relaxed">
+            Create a room to edit documents, project uploaded PDF/Word/HTML files in full visual fidelity on a separate Reference Page, and use the live **Paint &amp; Sketch** tools to draw or annotate while teaching or collaborating.
+          </p>
+        </div>
+        <div class="flex flex-wrap items-center gap-3 shrink-0">
+          <button id="btnQuickDemoRoom" type="button" class="px-4 py-2.5 rounded-xl btn-accent font-semibold text-xs sm:text-sm shadow-md transition">
+            <svg class="w-3.5 h-3.5 inline mr-1 text-amber-400" fill="currentColor" viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> Launch Instant Sample Room
+          </button>
+        </div>
+      </div>
+
+      <!-- Main Action Cards -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <!-- Card A: Create a Room -->
+        <div class="theme-surface border rounded-2xl p-6 shadow-sm hover:shadow-md transition flex flex-col justify-between space-y-5">
+          <div class="space-y-3">
+            <div class="flex items-center justify-between">
+              <span class="px-3 py-1 rounded-full text-xs font-bold bg-blue-100 text-blue-800">Action A • Host / Owner</span>
+              <span class="text-xs theme-muted font-mono">Auto-generates Invite Link</span>
+            </div>
+            <h2 class="text-xl font-bold">Create a Collaborative Room</h2>
+            <p class="text-xs sm:text-sm theme-muted">
+              Set up a persistent room with custom access permissions, generate a shareable invitation link, and open the workspace immediately.
+            </p>
+
+            <form id="formCreateRoom" class="space-y-3.5 pt-2">
+              <div>
+                <label for="inputRoomName" class="block text-xs font-semibold mb-1">Room &amp; Document Name *</label>
+                <input id="inputRoomName" type="text" required placeholder="e.g. Lecture 4: Distributed Systems & Notes" class="w-full px-3.5 py-2.5 rounded-xl border theme-border theme-surface text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              </div>
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label for="inputRoomDesc" class="block text-xs font-semibold mb-1">Room Description (Optional)</label>
+                  <input id="inputRoomDesc" type="text" placeholder="Lecture reference, sprint notes, etc." class="w-full px-3.5 py-2 rounded-xl border theme-border theme-surface text-sm" />
+                </div>
+                <div>
+                  <label for="inputRoomAccess" class="block text-xs font-semibold mb-1">Collaborator Permission</label>
+                  <select id="inputRoomAccess" class="w-full px-3 py-2 rounded-xl border theme-border theme-surface text-sm">
+                    <option value="edit">Can Edit, Sketch &amp; Format (Default)</option>
+                    <option value="readonly">Read-Only Viewer Mode</option>
+                  </select>
+                </div>
+              </div>
+
+              <div id="createdRoomPreview" class="hidden p-3 rounded-xl theme-subtle border theme-border space-y-2 text-xs">
+                <div class="flex items-center justify-between">
+                  <span class="font-bold">Generated Room ID: <code id="previewRoomId" class="text-blue-600 font-mono"></code></span>
+                  <button type="button" id="btnCopyPreviewInvite" class="px-2.5 py-1 rounded-lg btn-accent text-white font-semibold">
+                    Copy Invite Link
+                  </button>
+                </div>
+                <div id="previewInviteUrl" class="font-mono text-[11px] theme-muted truncate"></div>
+              </div>
+
+              <div class="flex flex-wrap items-center gap-2 pt-1">
+                <button type="submit" class="flex-1 py-2.5 px-4 rounded-xl btn-accent font-semibold text-sm shadow-sm transition">
+                  + Create Room &amp; Open Workspace
+                </button>
+                <button type="button" id="btnPreviewLinkOnly" class="px-3.5 py-2.5 rounded-xl border theme-border text-xs font-semibold hover:opacity-80">
+                  Generate Link First
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+
+        <!-- Card B: Join a Room -->
+        <div class="theme-surface border rounded-2xl p-6 shadow-sm hover:shadow-md transition flex flex-col justify-between space-y-5">
+          <div class="space-y-3">
+            <div class="flex items-center justify-between">
+              <span class="px-3 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800">Action B • Collaborator</span>
+              <span class="text-xs theme-muted font-mono">Permission-Checked Access</span>
+            </div>
+            <h2 class="text-xl font-bold">Join an Existing Room</h2>
+            <p class="text-xs sm:text-sm theme-muted">
+              Paste a Room ID (such as <code class="font-mono">CS-482910</code>) or a full CollabSpace invitation link shared by a teammate or instructor.
+            </p>
+
+            <form id="formJoinRoom" class="space-y-4 pt-2">
+              <div>
+                <label for="inputJoinRoomId" class="block text-xs font-semibold mb-1">Room ID or Invitation Link *</label>
+                <input id="inputJoinRoomId" type="text" required placeholder="Paste CS-XXXXXX or https://.../room/CS-XXXXXX" class="w-full px-3.5 py-2.5 rounded-xl border theme-border theme-surface text-sm font-mono focus:outline-none focus:ring-2 focus:ring-emerald-500" />
+              </div>
+
+              <div id="joinRoomErrorBox" class="hidden p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs font-medium"></div>
+
+              <div class="p-3.5 rounded-xl theme-subtle border theme-border text-xs space-y-1">
+                <div class="font-semibold">What happens when you join?</div>
+                <p class="theme-muted">
+                  CollabSpace verifies the room, loads the shared notes, syncs any projected reference documents, and connects your live cursor and sketch canvas.
+                </p>
+              </div>
+
+              <button type="submit" class="w-full py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-sm shadow-sm transition">
+                Validate &amp; Join Collaborative Room &rarr;
+              </button>
+            </form>
+          </div>
+        </div>
+      </div>
+
+      <!-- Recently Accessed Rooms -->
+      <div class="space-y-4">
+        <div class="flex items-center justify-between">
+          <div>
+            <h2 class="text-lg font-bold">Recently Accessed Rooms</h2>
+            <p class="text-xs theme-muted">Reopen your persistent rooms or copy their invitation links</p>
+          </div>
+          <span id="recentRoomsCount" class="text-xs font-mono px-2.5 py-1 rounded-lg theme-subtle border theme-border">0 Rooms</span>
+        </div>
+
+        <div id="recentRoomsGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"></div>
+      </div>
+
+      <!-- Architecture Visualization -->
+      <div class="theme-surface border rounded-2xl p-6 sm:p-8 space-y-6">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <span class="text-xs font-bold uppercase tracking-wider" style="color: var(--accent);">System Architecture</span>
+            <h2 class="text-xl font-bold mt-1">End-to-End Real-Time Collaborative Pipeline</h2>
+          </div>
+          <span class="text-xs font-mono px-3 py-1 rounded-full theme-subtle border theme-border">
+            React + TipTap + Paint Canvas &rarr; Express/JWT &rarr; Socket.IO &rarr; Yjs CRDT &rarr; MongoDB
+          </span>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-center">
+          <div class="lg:col-span-5 flex flex-col items-center space-y-2">
+            <div class="w-full p-3.5 rounded-xl border-2 border-blue-500/40 bg-blue-500/5 text-center shadow-sm">
+              <div class="text-xs font-bold uppercase tracking-wider text-blue-600">Layer 1 • Clients</div>
+              <div class="font-bold text-sm mt-0.5">User A / User B (Multi-Client Sessions)</div>
+            </div>
+            <div class="text-lg font-bold" style="color: var(--accent);">↓</div>
+            <div class="w-full p-3.5 rounded-xl border-2 border-indigo-500/40 bg-indigo-500/5 text-center shadow-sm">
+              <div class="text-xs font-bold uppercase tracking-wider text-indigo-600">Layer 2 • Workspace UI</div>
+              <div class="font-bold text-sm mt-0.5">React Frontend, Rich-Text Editor, File Projector &amp; Sketch Canvas</div>
+            </div>
+            <div class="text-lg font-bold" style="color: var(--accent);">↓</div>
+            <div class="w-full p-3.5 rounded-xl border-2 border-emerald-500/40 bg-emerald-500/5 text-center shadow-sm">
+              <div class="text-xs font-bold uppercase tracking-wider text-emerald-600">Layer 3 • Security Gateway</div>
+              <div class="font-bold text-sm mt-0.5">Authentication and Room Management API</div>
+            </div>
+            <div class="text-lg font-bold" style="color: var(--accent);">↓</div>
+            <div class="w-full p-3.5 rounded-xl border-2 border-amber-500/40 bg-amber-500/5 text-center shadow-sm">
+              <div class="text-xs font-bold uppercase tracking-wider text-amber-600">Layer 4 • Bi-Directional Transport</div>
+              <div class="font-bold text-sm mt-0.5">WebSocket / Socket.IO Communication</div>
+            </div>
+            <div class="text-lg font-bold" style="color: var(--accent);">↓</div>
+            <div class="w-full p-3.5 rounded-xl border-2 border-purple-500/40 bg-purple-500/5 text-center shadow-sm">
+              <div class="text-xs font-bold uppercase tracking-wider text-purple-600">Layer 5 • Conflict Resolution</div>
+              <div class="font-bold text-sm mt-0.5">CRDT Synchronization Engine (Yjs State Vectors)</div>
+            </div>
+            <div class="text-lg font-bold" style="color: var(--accent);">↓</div>
+            <div class="w-full p-3.5 rounded-xl border-2 border-slate-500/40 bg-slate-500/5 text-center shadow-sm">
+              <div class="text-xs font-bold uppercase tracking-wider theme-muted">Layer 6 • Storage &amp; File I/O</div>
+              <div class="font-bold text-sm mt-0.5">Backend Services and MongoDB Persistence</div>
+            </div>
+          </div>
+
+          <div class="lg:col-span-7 grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div class="p-4 rounded-xl theme-subtle border theme-border space-y-1.5">
+              <div class="text-xs font-bold text-blue-600">1. Authentication Verification</div>
+              <p class="text-xs theme-muted leading-relaxed">
+                Passwords are salted and hashed (bcrypt / SHA-256). JWT bearer tokens authenticate every REST request and WebSocket handshake.
+              </p>
+            </div>
+            <div class="p-4 rounded-xl theme-subtle border theme-border space-y-1.5">
+              <div class="text-xs font-bold text-indigo-600">2. Full-Format File Projection</div>
+              <p class="text-xs theme-muted leading-relaxed">
+                Uploaded PDFs, Word docs, HTML, Markdown, and images open on a dedicated Reference Projector page so instructors and students can view the exact original file while taking notes.
+              </p>
+            </div>
+            <div class="p-4 rounded-xl theme-subtle border theme-border space-y-1.5">
+              <div class="text-xs font-bold text-amber-600">3. Interactive Paint &amp; Sketch Engine</div>
+              <p class="text-xs theme-muted leading-relaxed">
+                Freehand pen, highlighter marker, shapes, arrows, and eraser allow drawing directly over projected files or on a dedicated whiteboard canvas.
+              </p>
+            </div>
+            <div class="p-4 rounded-xl theme-subtle border theme-border space-y-1.5">
+              <div class="text-xs font-bold text-purple-600">4. CRDT Conflict-Free Merging</div>
+              <p class="text-xs theme-muted leading-relaxed">
+                Concurrent edits and sketch strokes from multiple users are merged deterministically in real time.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </section>
+
+  <!-- ===================================================================== -->
+  <!-- PAGE 3: MAIN COLLABORATIVE WORKSPACE, FILE PROJECTOR & SKETCH STUDIO  -->
+  <!-- ===================================================================== -->
+  <section id="pageEditor" class="hidden min-h-screen flex flex-col">
+    <!-- A. Top Navigation Bar -->
+    <header class="sticky top-0 z-30 theme-surface border-b theme-border px-3 sm:px-5 py-2.5 flex flex-wrap items-center justify-between gap-2.5">
+      <div class="flex items-center gap-2.5 flex-wrap">
+        <button id="btnBackToDashboard" type="button" title="Back to Dashboard" class="flex items-center gap-2 px-2.5 py-1.5 rounded-xl theme-subtle border theme-border hover:opacity-80 text-xs font-bold">
+          <span class="w-6 h-6 rounded-lg btn-accent text-white flex items-center justify-center font-extrabold">CS</span>
+          <span class="hidden sm:inline">&larr; Dashboard</span>
+        </button>
+
+        <div class="flex flex-col">
+          <div class="flex items-center gap-2">
+            <input id="editorDocTitle" type="text" value="Untitled Document" aria-label="Document Title" class="font-bold text-sm sm:text-base bg-transparent border-b border-transparent focus:border-blue-500 focus:outline-none px-1 py-0.5 max-w-[180px] sm:max-w-xs" />
+            <span id="editorRoleBadge" class="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-blue-100 text-blue-800">
+              Owner
+            </span>
+          </div>
+          <div class="flex items-center gap-2 text-[11px] theme-muted px-1">
+            <span>Room: <strong id="editorRoomIdDisplay" class="font-mono">CS-100000</strong></span>
+            <span>•</span>
+            <span id="editorSaveStatus" class="text-emerald-600 font-medium">✓ Saved &amp; Synced</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- WORKSPACE VIEW SWITCHER (Notes Page vs Split-Screen Teaching vs Reference File Projector Page vs Sketch Whiteboard) -->
+      <div class="flex items-center gap-1 theme-subtle p-1 rounded-xl border theme-border text-xs">
+        <button id="btnModeNotes" type="button" class="px-2.5 py-1.5 rounded-lg font-semibold btn-accent text-white shadow-sm transition">
+          <svg class="w-3.5 h-3.5 inline mr-1 text-blue-500" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="16" x2="8" y1="13" y2="13"/><line x1="16" x2="8" y1="17" y2="17"/><line x1="10" x2="8" y1="9" y2="9"/></svg> Notes Editor
+        </button>
+        <button id="btnModeSplit" type="button" class="px-2.5 py-1.5 rounded-lg font-semibold theme-muted hover:opacity-90 transition">
+          <svg class="w-3.5 h-3.5 inline mr-1 text-emerald-500" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M12 3v18"/></svg> Split View (File + Notes)
+        </button>
+        <button id="btnModeProjector" type="button" class="px-2.5 py-1.5 rounded-lg font-semibold theme-muted hover:opacity-90 transition flex items-center gap-1">
+          <span><svg class="w-3.5 h-3.5 inline mr-1 text-blue-500" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg> Reference File Page</span>
+          <span id="projectorFileBadge" class="hidden px-1.5 py-0.2 rounded-full bg-amber-400 text-slate-950 text-[10px] font-extrabold">1</span>
+        </button>
+        <button id="btnModeWhiteboard" type="button" class="px-2.5 py-1.5 rounded-lg font-semibold theme-muted hover:opacity-90 transition">
+          <svg class="w-3.5 h-3.5 inline mr-1 text-purple-500" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg> Paint &amp; Sketchboard
+        </button>
+      </div>
+
+      <!-- Right Controls: Sketch Overlay Toggle, Upload/Project File, Export, Theme (Light/Dark only) -->
+      <div class="flex flex-wrap items-center gap-2">
+        <!-- Toggle Cursor Sketch Overlay directly over the active page -->
+        <button id="btnToggleOverlaySketch" type="button" class="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-extrabold shadow-sm flex items-center gap-1.5 transition">
+          <span><svg class="w-3.5 h-3.5 inline mr-1 text-amber-500" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><line x1="18" y1="2" x2="22" y2="6"/><path d="m7.5 20.5 9-9L12.5 7.5l-9 9 1 4z"/></svg></span>
+          <span id="overlaySketchBtnText">Draw on Screen: OFF</span>
+        </button>
+
+        <!-- Upload & Project File Button -->
+        <button id="btnOpenImportModal" type="button" class="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-sm flex items-center gap-1">
+          <span><svg class="w-3.5 h-3.5 inline mr-1 text-blue-500" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg></span>
+          <span>Upload &amp; Project File</span>
+        </button>
+
+        <!-- Download / Export Dropdown -->
+        <div class="relative">
+          <button id="btnToggleExportMenu" type="button" class="px-3 py-1.5 rounded-xl btn-accent text-white text-xs font-semibold shadow-sm flex items-center gap-1">
+            <span><svg class="w-3.5 h-3.5 inline mr-1 text-amber-500" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg></span>
+            <span>Export</span>
+          </button>
+          <div id="exportDropdownMenu" class="hidden absolute right-0 mt-2 w-56 rounded-2xl theme-surface border theme-border shadow-2xl py-2 z-50 text-xs">
+            <div class="px-3 py-1.5 font-bold theme-muted border-b theme-border">Export Latest Document</div>
+            <button type="button" data-export-fmt="docx" class="w-full text-left px-3.5 py-2 hover:bg-blue-500/10 flex items-center justify-between">
+              <span><svg class="w-3.5 h-3.5 inline mr-1.5 text-blue-600" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><path d="M9 13v4"/><path d="M12 13v4"/><path d="M15 13v4"/></svg> Microsoft Word (.docx)</span>
+              <span class="font-mono text-[10px] theme-muted">Rich Text</span>
+            </button>
+            <button type="button" data-export-fmt="pdf" class="w-full text-left px-3.5 py-2 hover:bg-blue-500/10 flex items-center justify-between">
+              <span><svg class="w-3.5 h-3.5 inline mr-1.5 text-rose-600" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><path d="M10 12h4"/><path d="M10 15h2"/></svg> PDF Document (.pdf)</span>
+              <span class="font-mono text-[10px] theme-muted">Formatted</span>
+            </button>
+            <button type="button" data-export-fmt="html" class="w-full text-left px-3.5 py-2 hover:bg-blue-500/10 flex items-center justify-between">
+              <span><svg class="w-3.5 h-3.5 inline mr-1.5 text-emerald-600" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="2" x2="22" y1="12" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg> Web Document (.html)</span>
+              <span class="font-mono text-[10px] theme-muted">HTML5</span>
+            </button>
+            <button type="button" data-export-fmt="md" class="w-full text-left px-3.5 py-2 hover:bg-blue-500/10 flex items-center justify-between">
+              <span><svg class="w-3.5 h-3.5 inline mr-1.5 text-indigo-500" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><path d="M9 15l2-2 2 2"/><path d="M11 13v4"/></svg> Markdown (.md)</span>
+              <span class="font-mono text-[10px] theme-muted">CommonMark</span>
+            </button>
+            <button type="button" data-export-fmt="txt" class="w-full text-left px-3.5 py-2 hover:bg-blue-500/10 flex items-center justify-between">
+              <span><svg class="w-3.5 h-3.5 inline mr-1 text-blue-500" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="16" x2="8" y1="13" y2="13"/><line x1="16" x2="8" y1="17" y2="17"/><line x1="10" x2="8" y1="9" y2="9"/></svg> Plain Text (.txt)</span>
+              <span class="font-mono text-[10px] theme-muted">UTF-8</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Theme Selector: ONLY Light and Dark -->
+        <select id="editorThemeSelect" aria-label="Theme Selector" class="text-xs rounded-xl border theme-border theme-surface px-2.5 py-1.5 font-medium">
+          <option value="light"><svg class="w-3.5 h-3.5 inline mr-1 text-amber-500" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg> Light</option>
+          <option value="dark"><svg class="w-3.5 h-3.5 inline mr-1 text-indigo-400" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg> Dark</option>
+        </select>
+
+        <button id="btnCycleConnection" type="button" title="Connection Status" class="px-2.5 py-1 rounded-full text-xs font-semibold border flex items-center gap-1.5 bg-emerald-50 text-emerald-700 border-emerald-200">
+          <span id="connStatusDot" class="w-2 h-2 rounded-full bg-emerald-500"></span>
+          <span id="connStatusLabel">Connected</span>
+        </button>
+
+        <button id="btnLeaveRoom" type="button" class="px-2.5 py-1.5 rounded-xl border theme-border text-xs font-semibold hover:bg-red-50 hover:text-red-600">
+          Leave
+        </button>
+      </div>
+    </header>
+
+    <!-- B. Rich-Text Formatting Toolbar -->
+    <div id="editorToolbarBar" class="sticky top-[57px] z-20 theme-subtle border-b theme-border px-3 sm:px-6 py-2 flex flex-wrap items-center gap-1.5 text-xs">
+      <button type="button" data-cmd="undo" title="Undo (Ctrl+Z)" class="toolbar-btn"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg></button>
+      <button type="button" data-cmd="redo" title="Redo (Ctrl+Y)" class="toolbar-btn"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3l3 2.7"/></svg></button>
+
+      <span class="h-5 w-px bg-slate-300 dark:bg-slate-700 mx-1"></span>
+
+      <select id="toolbarBlockFormat" aria-label="Heading or Paragraph Style" class="rounded-lg border theme-border theme-surface px-2 py-1 text-xs font-medium">
+        <option value="P">Paragraph</option>
+        <option value="H1">Heading 1</option>
+        <option value="H2">Heading 2</option>
+        <option value="H3">Heading 3</option>
+        <option value="BLOCKQUOTE">Quote Block</option>
+        <option value="PRE">Code Block</option>
+      </select>
+
+      <select id="toolbarFontFamily" aria-label="Font Family" class="rounded-lg border theme-border theme-surface px-2 py-1 text-xs font-medium">
+        <option value="Inter, sans-serif">Sans (Inter)</option>
+        <option value="Merriweather, serif">Serif (Merriweather)</option>
+        <option value="'JetBrains Mono', monospace">Monospace (JetBrains)</option>
+        <option value="Georgia, serif">Georgia</option>
+      </select>
+
+      <select id="toolbarFontSize" aria-label="Font Size" class="rounded-lg border theme-border theme-surface px-2 py-1 text-xs font-medium">
+        <option value="2">Small (13px)</option>
+        <option value="3" selected>Normal (16px)</option>
+        <option value="4">Medium (18px)</option>
+        <option value="5">Large (24px)</option>
+        <option value="6">XL (32px)</option>
+      </select>
+
+      <span class="h-5 w-px bg-slate-300 dark:bg-slate-700 mx-1"></span>
+
+      <button type="button" data-cmd="bold" title="Bold (Ctrl+B)" class="toolbar-btn font-bold">B</button>
+      <button type="button" data-cmd="italic" title="Italic (Ctrl+I)" class="toolbar-btn italic">I</button>
+      <button type="button" data-cmd="underline" title="Underline (Ctrl+U)" class="toolbar-btn underline">U</button>
+      <button type="button" data-cmd="strikeThrough" title="Strikethrough" class="toolbar-btn line-through">S</button>
+
+      <span class="h-5 w-px bg-slate-300 dark:bg-slate-700 mx-1"></span>
+
+      <button type="button" data-cmd="justifyLeft" title="Align Left" class="toolbar-btn"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><line x1="21" x2="3" y1="6" y2="6"/><line x1="15" x2="3" y1="12" y2="12"/><line x1="17" x2="3" y1="18" y2="18"/></svg></button>
+      <button type="button" data-cmd="justifyCenter" title="Align Center" class="toolbar-btn"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><line x1="21" x2="3" y1="6" y2="6"/><line x1="17" x2="7" y1="12" y2="12"/><line x1="19" x2="5" y1="18" y2="18"/></svg></button>
+      <button type="button" data-cmd="justifyRight" title="Align Right" class="toolbar-btn"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><line x1="21" x2="3" y1="6" y2="6"/><line x1="21" x2="9" y1="12" y2="12"/><line x1="21" x2="7" y1="18" y2="18"/></svg></button>
+      <button type="button" data-cmd="justifyFull" title="Justify" class="toolbar-btn">☰</button>
+
+      <span class="h-5 w-px bg-slate-300 dark:bg-slate-700 mx-1"></span>
+
+      <button type="button" data-cmd="insertUnorderedList" title="Bulleted List" class="toolbar-btn">•≡</button>
+      <button type="button" data-cmd="insertOrderedList" title="Numbered List" class="toolbar-btn">1≡</button>
+
+      <span class="h-5 w-px bg-slate-300 dark:bg-slate-700 mx-1"></span>
+
+      <!-- Text Color Palette -->
+      <div class="flex items-center gap-1 px-1.5 py-0.5 rounded-lg border theme-border theme-surface" title="Text Color">
+        <span class="font-bold text-[11px]">A</span>
+        <button type="button" data-forecolor="#0f172a" class="w-4 h-4 rounded-full bg-slate-900 border border-slate-300"></button>
+        <button type="button" data-forecolor="#dc2626" class="w-4 h-4 rounded-full bg-red-600"></button>
+        <button type="button" data-forecolor="#2563eb" class="w-4 h-4 rounded-full bg-blue-600"></button>
+        <button type="button" data-forecolor="#059669" class="w-4 h-4 rounded-full bg-emerald-600"></button>
+        <input id="customForeColor" type="color" value="#2563eb" class="w-4 h-4 cursor-pointer border-0 bg-transparent" />
+      </div>
+
+      <!-- Highlight Color Palette -->
+      <div class="flex items-center gap-1 px-1.5 py-0.5 rounded-lg border theme-border theme-surface" title="Highlight Selection">
+        <span><svg class="w-3.5 h-3.5 text-amber-500" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="m9 11-6 6v3h3l6-6"/><path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"/></svg></span>
+        <button type="button" data-hilite="#fef08a" class="w-4 h-4 rounded-full bg-yellow-200 border border-slate-300"></button>
+        <button type="button" data-hilite="#bbf7d0" class="w-4 h-4 rounded-full bg-green-200 border border-slate-300"></button>
+        <button type="button" data-hilite="#bfdbfe" class="w-4 h-4 rounded-full bg-blue-200 border border-slate-300"></button>
+        <button type="button" data-hilite="#fbcfe8" class="w-4 h-4 rounded-full bg-pink-200 border border-slate-300"></button>
+        <button type="button" data-hilite="transparent" class="px-1 text-[10px] rounded border theme-border">✕</button>
+      </div>
+
+      <span class="h-5 w-px bg-slate-300 dark:bg-slate-700 mx-1"></span>
+
+      <button type="button" id="btnInsertLink" title="Insert Hyperlink" class="toolbar-btn"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></button>
+      <button type="button" id="btnInsertImage" title="Insert Image" class="toolbar-btn"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg></button>
+      <button type="button" data-cmd="removeFormat" title="Clear Formatting" class="toolbar-btn"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/></svg></button>
+
+      <div class="ml-auto flex items-center gap-2">
+        <button id="btnSimulateCoEditor" type="button" class="px-2.5 py-1 rounded-lg border theme-border theme-surface text-xs font-semibold hover:opacity-90">
+          <svg class="w-3.5 h-3.5 inline mr-1 text-indigo-500" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg> <span id="coEditorBtnLabel">Simulate Live Teammate</span>
+        </button>
+        <button id="btnCopyRoomInvite" type="button" class="px-2.5 py-1 rounded-lg border theme-border theme-surface text-xs font-semibold hover:opacity-90">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg> Copy Invite
+        </button>
+      </div>
+    </div>
+
+    <!-- C. PAINT & SKETCH FLOATING/RIBBON TOOLBAR (Appears when Draw on Screen or Paintboard is active) -->
+    <div id="sketchToolbarRibbon" class="hidden sticky top-[101px] z-30 bg-amber-50 dark:bg-slate-900 border-b-2 border-amber-400 px-4 py-2 flex flex-wrap items-center justify-between gap-3 text-xs shadow-md">
+      <div class="flex flex-wrap items-center gap-2">
+        <span class="px-2.5 py-1 rounded-lg bg-amber-400 text-slate-950 font-extrabold uppercase tracking-wider text-[11px]">
+          <svg class="w-3.5 h-3.5 inline mr-1 text-purple-500" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg> Live Paint &amp; Cursor Sketch Active
+        </span>
+
+        <!-- Drawing Tools: Pen, Highlighter Marker, Line, Arrow, Rectangle, Circle, Eraser -->
+        <div class="flex items-center gap-1 bg-white dark:bg-slate-800 p-1 rounded-xl border border-slate-300 dark:border-slate-700">
+          <button type="button" data-sketch-tool="pen" class="sketch-tool-btn px-2.5 py-1 rounded-lg font-semibold bg-blue-600 text-white"><svg class="w-3.5 h-3.5 inline mr-1 text-amber-500" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><line x1="18" y1="2" x2="22" y2="6"/><path d="m7.5 20.5 9-9L12.5 7.5l-9 9 1 4z"/></svg> Pen</button>
+          <button type="button" data-sketch-tool="marker" class="sketch-tool-btn px-2.5 py-1 rounded-lg font-semibold"><svg class="w-3.5 h-3.5 text-amber-500" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="m9 11-6 6v3h3l6-6"/><path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"/></svg> Marker</button>
+          <button type="button" data-sketch-tool="line" class="sketch-tool-btn px-2.5 py-1 rounded-lg font-semibold"><svg class="w-3.5 h-3.5 inline mr-1" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><line x1="5" x2="19" y1="12" y2="12"/></svg> Line</button>
+          <button type="button" data-sketch-tool="arrow" class="sketch-tool-btn px-2.5 py-1 rounded-lg font-semibold"><svg class="w-3.5 h-3.5 inline mr-1" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><line x1="7" x2="17" y1="17" y2="7"/><polyline points="7 7 17 7 17 17"/></svg> Arrow</button>
+          <button type="button" data-sketch-tool="rect" class="sketch-tool-btn px-2.5 py-1 rounded-lg font-semibold">▭ Box</button>
+          <button type="button" data-sketch-tool="circle" class="sketch-tool-btn px-2.5 py-1 rounded-lg font-semibold">◯ Circle</button>
+          <button type="button" data-sketch-tool="eraser" class="sketch-tool-btn px-2.5 py-1 rounded-lg font-semibold"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/></svg> Eraser</button>
+        </div>
+
+        <!-- Stroke Color Swatches + Picker -->
+        <div class="flex items-center gap-1.5 bg-white dark:bg-slate-800 px-2.5 py-1 rounded-xl border border-slate-300 dark:border-slate-700">
+          <span class="font-semibold text-[11px]">Color:</span>
+          <button type="button" data-sketch-color="#ef4444" class="w-5 h-5 rounded-full bg-red-500 ring-2 ring-offset-1 ring-red-500"></button>
+          <button type="button" data-sketch-color="#2563eb" class="w-5 h-5 rounded-full bg-blue-600"></button>
+          <button type="button" data-sketch-color="#10b981" class="w-5 h-5 rounded-full bg-emerald-500"></button>
+          <button type="button" data-sketch-color="#f59e0b" class="w-5 h-5 rounded-full bg-amber-500"></button>
+          <button type="button" data-sketch-color="#9333ea" class="w-5 h-5 rounded-full bg-purple-600"></button>
+          <button type="button" data-sketch-color="#0f172a" class="w-5 h-5 rounded-full bg-slate-900 border border-slate-300"></button>
+          <input id="sketchColorPicker" type="color" value="#ef4444" class="w-6 h-5 cursor-pointer border-0 bg-transparent" title="Custom Paint Color" />
+        </div>
+
+        <!-- Brush Size Slider -->
+        <div class="flex items-center gap-2 bg-white dark:bg-slate-800 px-2.5 py-1 rounded-xl border border-slate-300 dark:border-slate-700">
+          <label for="sketchSizeRange" class="font-semibold text-[11px]">Size:</label>
+          <input id="sketchSizeRange" type="range" min="1" max="24" value="4" class="w-20 accent-blue-600 cursor-pointer" />
+          <span id="sketchSizeLabel" class="font-mono font-bold text-[11px]">4px</span>
+        </div>
+      </div>
+
+      <!-- Right Sketch Actions: Undo, Clear, Save into Notes, Download PNG -->
+      <div class="flex items-center gap-1.5">
+        <button id="btnSketchUndo" type="button" class="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 font-semibold hover:opacity-80">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg> Undo Stroke
+        </button>
+        <button id="btnSketchClear" type="button" class="px-2.5 py-1 rounded-lg bg-red-50 text-red-700 border border-red-200 font-semibold hover:bg-red-100">
+          <svg class="w-3.5 h-3.5 inline mr-1 text-rose-500" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg> Clear Marks
+        </button>
+        <button id="btnInsertSketchIntoNotes" type="button" class="px-3 py-1 rounded-lg bg-emerald-600 text-white font-semibold hover:bg-emerald-700">
+          <svg class="w-3.5 h-3.5 inline mr-1 text-blue-500" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="16"/><line x1="8" x2="16" y1="12" y2="12"/></svg> Embed Sketch in Notes
+        </button>
+        <button id="btnDownloadSketchPng" type="button" class="px-2.5 py-1 rounded-lg btn-accent text-white font-semibold">
+          <svg class="w-3.5 h-3.5 inline mr-1 text-amber-500" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg> Save PNG
+        </button>
+      </div>
+    </div>
+
+    <!-- D. MAIN WORKSPACE CONTAINER (Supports Notes Only, Split Teaching Mode, Full Reference File Projector Page, and Paint Whiteboard) -->
+    <div id="editorDropZone" class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-5 grid grid-cols-1 lg:grid-cols-12 gap-6 relative">
+
+      <!-- LEFT / CENTER AREA (9 cols default, or 12 cols in Split/Projector/Whiteboard) -->
+      <div id="mainStageColumn" class="lg:col-span-9 space-y-4">
+
+        <!-- Live Remote Collaborator Cursor Bar -->
+        <div class="flex flex-wrap items-center justify-between gap-2 px-3.5 py-2 rounded-xl theme-subtle border theme-border text-xs">
+          <div class="flex items-center gap-2">
+            <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+            <span id="liveSyncStatusText">Yjs CRDT + Live Paint Sync Active — Changes &amp; cursor markings sync across room</span>
+          </div>
+          <div id="remoteCursorIndicator" class="font-mono text-[11px] text-blue-600 font-semibold">
+            Ready for collaborative editing &amp; sketching
+          </div>
+        </div>
+
+        <!-- WORKSPACE GRID: Dynamically switches between Single Notes, Split-Screen (Projected File + Notes), Full Projected File Page, or Whiteboard -->
+        <div id="workspacePanelsGrid" class="grid grid-cols-1 gap-6">
+
+          <!-- PANEL 1: DEDICATED REFERENCE FILE PROJECTOR PAGE (Hidden until file uploaded or Reference Page / Split View selected) -->
+          <div id="panelReferenceProjector" class="hidden flex flex-col rounded-2xl border-2 border-indigo-500/40 theme-surface shadow-xl overflow-hidden">
+            <!-- Projector Header Bar -->
+            <div class="bg-indigo-600 text-white px-4 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs">
+              <div class="flex items-center gap-2">
+                <span><svg class="w-3.5 h-3.5 inline mr-1 text-blue-500" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg></span>
+                <div>
+                  <span class="font-bold">Projected Reference File: </span>
+                  <span id="projectedFileName" class="font-mono underline">No file uploaded yet</span>
+                  <span id="projectedFileTypeBadge" class="ml-2 px-2 py-0.5 rounded bg-white/20 font-mono text-[10px]">READY</span>
+                </div>
+              </div>
+              <div class="flex items-center gap-2">
+                <button id="btnProjectorDrawToggle" type="button" class="px-2.5 py-1 rounded-lg bg-amber-400 text-slate-950 font-bold hover:bg-amber-300">
+                  <svg class="w-3.5 h-3.5 inline mr-1 text-amber-500" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><line x1="18" y1="2" x2="22" y2="6"/><path d="m7.5 20.5 9-9L12.5 7.5l-9 9 1 4z"/></svg> Draw / Mark on File
+                </button>
+                <button id="btnCopyProjectedToNotes" type="button" class="px-2.5 py-1 rounded-lg bg-white/20 hover:bg-white/30 text-white font-semibold" title="Also copy text to notes editor if desired">
+                  <svg class="w-3.5 h-3.5 inline mr-1 text-slate-400" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg> Copy Text to Notes
+                </button>
+                <button id="btnSwitchToSplitFromProjector" type="button" class="px-2.5 py-1 rounded-lg bg-emerald-500 hover:bg-emerald-600 text-white font-bold">
+                  <svg class="w-3.5 h-3.5 inline mr-1 text-emerald-500" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M12 3v18"/></svg> Take Notes Side-by-Side
+                </button>
+              </div>
+            </div>
+
+            <!-- Projected File Viewport (With Transparent Sketch Canvas Overlay for Marking/Teaching!) -->
+            <div id="projectedViewportWrapper" class="relative bg-slate-200 dark:bg-slate-950 p-4 sm:p-6 overflow-y-auto max-h-[720px] min-h-[580px] flex flex-col items-center">
+              <!-- Empty State when no file is uploaded yet -->
+              <div id="projectorEmptyState" class="my-auto max-w-md text-center space-y-4 p-6 rounded-2xl theme-surface border theme-border shadow-sm">
+                <div><svg class="w-8 h-8 text-blue-500 mx-auto" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/><polyline points="12 10 12 16"/><polyline points="9 13 12 10 15 13"/></svg></div>
+                <h3 class="text-base font-bold">Project Any Document, PDF, Word, or Image File</h3>
+                <p class="text-xs theme-muted leading-relaxed">
+                  Upload a file to project its <strong>complete original formatting, pages, tables, and visual layout</strong> here on the Reference Page. You can mark it up with your cursor using the Paint/Sketch tool while taking notes on the Notes Page!
+                </p>
+                <div class="flex flex-wrap justify-center gap-2">
+                  <button id="btnEmptyUploadTrigger" type="button" class="px-4 py-2 rounded-xl bg-indigo-600 text-white text-xs font-bold shadow">
+                    <svg class="w-3.5 h-3.5 inline mr-1 text-blue-500" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg> Upload File from Device
+                  </button>
+                  <button id="btnEmptyLoadSampleLecture" type="button" class="px-4 py-2 rounded-xl border theme-border theme-subtle text-xs font-semibold">
+                    <svg class="w-3.5 h-3.5 inline mr-1 text-emerald-500" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M21.42 10.922a1 1 0 0 0-.019-.838L12.83 3.18a2 2 0 0 0-1.66 0L2.6 10.084a1 1 0 0 0 0 1.832l8.57 6.908a2 2 0 0 0 1.66 0l8.57-6.908a1 1 0 0 0 .02-.994z"/><path d="M6 13v6a3 3 0 0 0 6 0v-6"/></svg> Load Sample Lecture Slides &amp; Diagram
+                  </button>
+                </div>
+              </div>
+
+              <!-- Actual Projected Content Container (PDF Canvases, Styled DOCX Sheet, HTML/MD Visual Sheet, or Image) -->
+              <div id="projectedContentHost" class="hidden w-full max-w-4xl space-y-6 relative z-10"></div>
+
+              <!-- Transparent Interactive Sketch Overlay over the Projected File -->
+              <canvas id="projectorSketchCanvas" class="hidden absolute top-0 left-0 z-20 pointer-events-none"></canvas>
+            </div>
+          </div>
+
+          <!-- PANEL 2: COLLABORATIVE NOTES EDITOR (With Optional Screen-Draw Sketch Overlay) -->
+          <div id="panelNotesEditor" class="flex flex-col space-y-3">
+            <div class="flex items-center justify-between px-1 text-xs">
+              <span class="font-bold uppercase tracking-wider theme-muted flex items-center"><svg class="w-3.5 h-3.5 inline mr-1 text-blue-500" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="16" x2="8" y1="13" y2="13"/><line x1="16" x2="8" y1="17" y2="17"/><line x1="10" x2="8" y1="9" y2="9"/></svg> Collaborative Notes &amp; Document Page</span>
+              <span class="text-[11px] theme-muted">Tip: Use <strong>Split View</strong> to see your uploaded Reference File while taking notes here</span>
+            </div>
+
+            <div id="notesPaperWrapper" class="relative">
+              <div
+                id="richTextEditor"
+                contenteditable="true"
+                spellcheck="true"
+                class="editor-paper rounded-2xl border theme-border p-6 sm:p-10 text-base transition-colors"
+              ></div>
+              <!-- Transparent Cursor Sketch Canvas directly over the Notes Page -->
+              <canvas id="notesOverlayCanvas" class="hidden absolute inset-0 z-20 rounded-2xl pointer-events-none"></canvas>
+            </div>
+          </div>
+
+          <!-- PANEL 3: DEDICATED FULL PAINT & SKETCH WHITEBOARD PAGE -->
+          <div id="panelPaintWhiteboard" class="hidden flex flex-col rounded-2xl border theme-border theme-surface shadow-xl overflow-hidden">
+            <div class="px-4 py-3 border-b theme-border flex flex-wrap items-center justify-between gap-2 text-xs">
+              <div class="flex items-center gap-2">
+                <span><svg class="w-3.5 h-3.5 inline mr-1 text-purple-500" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg></span>
+                <div>
+                  <span class="font-bold text-sm">Interactive Paint &amp; Freehand Sketch Canvas</span>
+                  <p class="text-[11px] theme-muted">Draw diagrams, flowcharts, or handwritten equations with your cursor and insert them into your notes</p>
+                </div>
+              </div>
+              <div class="flex items-center gap-2">
+                <button id="btnWhiteboardGridToggle" type="button" class="px-2.5 py-1 rounded-lg border theme-border theme-subtle font-semibold">
+                  # Toggle Grid
+                </button>
+              </div>
+            </div>
+            <div id="whiteboardContainer" class="relative bg-white w-full h-[580px] overflow-hidden flex items-center justify-center">
+              <canvas id="whiteboardCanvas" width="1000" height="580" class="w-full h-full sketch-cursor-active"></canvas>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- Bottom Document Status Bar -->
+        <div class="flex flex-wrap items-center justify-between gap-2 px-4 py-2 rounded-xl theme-subtle border theme-border text-xs font-mono theme-muted">
+          <span id="editorWordCount">Words: 0 | Characters: 0</span>
+          <span id="editorCrdtClock">CRDT State Vector: v1 • Room Persisted</span>
+        </div>
+      </div>
+
+      <!-- RIGHT SIDEBAR: Collaborators & Sticky Annotations -->
+      <aside id="rightSidebarCol" class="lg:col-span-3 space-y-4">
+        <div class="theme-surface border theme-border rounded-2xl p-4 space-y-3 shadow-sm">
+          <div class="flex items-center justify-between">
+            <h3 class="text-xs font-bold uppercase tracking-wider theme-muted">Active Collaborators</h3>
+            <span id="sidebarCollabCount" class="text-xs font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">1 Online</span>
+          </div>
+          <div id="collaboratorAvatars" class="flex items-center gap-1.5 py-1"></div>
+          <div id="sidebarCollaboratorList" class="space-y-2 text-xs"></div>
+          <div class="pt-2 border-t theme-border space-y-2">
+            <button id="btnSidebarCopyInvite" type="button" class="w-full py-1.5 rounded-xl border theme-border text-xs font-semibold hover:opacity-80">
+              <svg class="w-3.5 h-3.5 inline mr-1 text-slate-400" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg> Copy Room Invitation Link
+            </button>
+          </div>
+        </div>
+
+        <!-- Uploaded Reference Files List in Room -->
+        <div class="theme-surface border theme-border rounded-2xl p-4 space-y-3 shadow-sm">
+          <div class="flex items-center justify-between">
+            <h3 class="text-xs font-bold uppercase tracking-wider theme-muted">Projected Reference Files</h3>
+            <button id="btnSidebarUpload" type="button" class="text-xs font-bold text-indigo-600 hover:underline">+ Upload</button>
+          </div>
+          <p class="text-[11px] theme-muted">
+            Uploaded files open in the <strong>Reference File Page</strong> with full visual layout preserved so you can teach or take notes alongside them.
+          </p>
+          <div id="uploadedFilesSidebarList" class="space-y-2 text-xs">
+            <div class="text-slate-400 italic">No reference file projected yet.</div>
+          </div>
+        </div>
+
+        <!-- Document Annotations & Sticky Notes -->
+        <div class="theme-surface border theme-border rounded-2xl p-4 space-y-3 shadow-sm">
+          <div class="flex items-center justify-between">
+            <h3 class="text-xs font-bold uppercase tracking-wider theme-muted">Teaching &amp; Margin Notes</h3>
+            <span id="annotationCountBadge" class="text-xs font-mono theme-muted">0</span>
+          </div>
+          <div class="flex gap-1.5">
+            <input id="inputAnnotationNote" type="text" placeholder="Add quick teaching note..." class="flex-1 px-2.5 py-1.5 rounded-lg border theme-border theme-surface text-xs" />
+            <button id="btnAddAnnotation" type="button" class="px-2.5 py-1.5 rounded-lg btn-accent text-white text-xs font-semibold">
+              + Add
+            </button>
+          </div>
+          <div id="annotationsList" class="space-y-2 max-h-56 overflow-y-auto text-xs"></div>
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  <!-- ===================================================================== -->
+  <!-- MODAL 1: UPLOAD & PROJECT FILE ON REFERENCE PAGE                      -->
+  <!-- ===================================================================== -->
+  <div id="modalImport" class="hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="theme-surface border theme-border rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4">
+      <div class="flex items-center justify-between border-b theme-border pb-3">
+        <div>
+          <h3 class="text-lg font-bold">Upload &amp; Project File in Full Format</h3>
+          <p class="text-xs theme-muted">Opens on the dedicated Reference Projector Page (or Split-Screen with your Notes)</p>
+        </div>
+        <button id="btnCloseImportModal" type="button" class="text-sm font-bold theme-muted hover:opacity-75">✕</button>
+      </div>
+
+      <!-- Choose How to Open Uploaded File -->
+      <div class="p-3 rounded-xl theme-subtle border theme-border space-y-2 text-xs">
+        <div class="font-bold">Where should the uploaded file open?</div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <label class="flex items-center gap-2 p-2 rounded-lg border theme-border theme-surface cursor-pointer">
+            <input type="radio" name="uploadOpenTarget" value="split" checked class="text-blue-600" />
+            <span><strong>Split-Screen Teaching View</strong> (Projected File + Notes Side-by-Side)</span>
+          </label>
+          <label class="flex items-center gap-2 p-2 rounded-lg border theme-border theme-surface cursor-pointer">
+            <input type="radio" name="uploadOpenTarget" value="projector" class="text-blue-600" />
+            <span><strong>Dedicated Reference Page</strong> (Full-Screen Projected File)</span>
+          </label>
+        </div>
+      </div>
+
+      <!-- Drag and Drop Zone -->
+      <label
+        id="importDropArea"
+        class="border-2 border-dashed border-indigo-400 rounded-2xl p-6 text-center cursor-pointer hover:border-blue-600 transition flex flex-col items-center justify-center space-y-2 bg-indigo-50/40 dark:bg-indigo-950/20"
+      >
+        <span><svg class="w-5 h-5 text-blue-500" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg></span>
+        <span class="text-sm font-bold">Click to choose any file (.pdf, .docx, .pptx/.html, .md, .txt, .rtf, or image)</span>
+        <span class="text-xs theme-muted">Projects exact PDF pages, formatted tables, headings, and images without stripping layout</span>
+        <input id="filePickerInput" type="file" hidden accept=".pdf,.docx,.doc,.html,.htm,.md,.txt,.rtf,.png,.jpg,.jpeg,.svg,.webp,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/html,text/markdown,text/plain,image/*" />
+      </label>
+
+      <!-- Instant Built-in Reference Samples -->
+      <div class="space-y-2">
+        <div class="text-xs font-bold theme-muted">Or project a rich formatted reference sample right now:</div>
+        <div class="grid grid-cols-3 gap-2 text-xs">
+          <button type="button" data-sample-import="pdf" class="py-2 px-3 rounded-xl border theme-border theme-subtle font-semibold hover:opacity-80">
+            <svg class="w-3.5 h-3.5 inline mr-1.5 text-rose-600" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><path d="M10 12h4"/><path d="M10 15h2"/></svg> Illustrated PDF Lecture
+          </button>
+          <button type="button" data-sample-import="docx" class="py-2 px-3 rounded-xl border theme-border theme-subtle font-semibold hover:opacity-80">
+            <svg class="w-3.5 h-3.5 inline mr-1.5 text-blue-600" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><path d="M9 13v4"/><path d="M12 13v4"/><path d="M15 13v4"/></svg> Formatted DOCX Spec
+          </button>
+          <button type="button" data-sample-import="md" class="py-2 px-3 rounded-xl border theme-border theme-subtle font-semibold hover:opacity-80">
+            <svg class="w-3.5 h-3.5 inline mr-1 text-purple-500" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><line x1="12" x2="12" y1="20" y2="10"/><line x1="18" x2="18" y1="20" y2="4"/><line x1="6" x2="6" y1="20" y2="16"/></svg> Architecture Sheet
+          </button>
+        </div>
+      </div>
+
+      <div id="importErrorBox" class="hidden p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs font-medium"></div>
+    </div>
+  </div>
+
+  <!-- ===================================================================== -->
+  <!-- MODAL 2: INSERT LINK / IMAGE MODAL                                    -->
+  <!-- ===================================================================== -->
+  <div id="modalInsertMedia" class="hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="theme-surface border theme-border rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
+      <div class="flex items-center justify-between border-b theme-border pb-3">
+        <h3 id="mediaModalTitle" class="text-base font-bold">Insert Link</h3>
+        <button id="btnCloseMediaModal" type="button" class="text-sm font-bold theme-muted">✕</button>
+      </div>
+      <form id="formInsertMedia" class="space-y-3">
+        <div>
+          <label id="mediaUrlLabel" class="block text-xs font-semibold mb-1">URL</label>
+          <input id="mediaUrlInput" type="url" placeholder="https://example.com" class="w-full px-3.5 py-2 rounded-xl border theme-border theme-surface text-sm" />
+        </div>
+        <div id="mediaImageUploadRow" class="hidden">
+          <label class="block text-xs font-semibold mb-1">Or upload an image file from device</label>
+          <input id="mediaImageFileInput" type="file" accept="image/*" class="text-xs" />
+        </div>
+        <div class="flex justify-end gap-2 pt-2">
+          <button type="button" id="btnCancelMedia" class="px-3.5 py-1.5 rounded-xl border theme-border text-xs font-semibold">Cancel</button>
+          <button type="submit" class="px-4 py-1.5 rounded-xl btn-accent text-white text-xs font-semibold">Insert</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ===================================================================== -->
+  <!-- MODAL 3: FULL-STACK REACT + NODE + MONGODB SOURCE CODE EXPLORER       -->
+  <!-- ===================================================================== -->
+  <div id="modalRepoExplorer" class="hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="theme-surface border theme-border rounded-2xl max-w-4xl w-full p-6 shadow-2xl space-y-4 max-h-[85vh] flex flex-col">
+      <div class="flex items-center justify-between border-b theme-border pb-3">
+        <div>
+          <h3 class="text-lg font-bold">CollabSpace Full-Stack Architecture &amp; Local Setup</h3>
+          <p class="text-xs theme-muted">Complete React + Vite + TypeScript + TipTap + Express + MongoDB + Yjs project is packaged in collabspace-fullstack.zip</p>
+        </div>
+        <button id="btnCloseRepoModal" type="button" class="text-sm font-bold theme-muted">✕</button>
+      </div>
+      <div class="overflow-y-auto space-y-3 text-xs font-mono p-4 rounded-xl bg-slate-950 text-slate-200 leading-relaxed">
+        <div class="text-emerald-400 font-bold"># 1. Extract the full-stack project ZIP</div>
+        <div>unzip collabspace-fullstack.zip &amp;&amp; cd collabspace</div>
+        <div class="text-emerald-400 font-bold mt-2"># 2. Configure environment variables (.env.example provided)</div>
+        <div>cp backend/.env.example backend/.env</div>
+        <div>cp frontend/.env.example frontend/.env</div>
+        <div class="text-emerald-400 font-bold mt-2"># 3. Install dependencies &amp; start MongoDB + Express + Vite</div>
+        <div>./setup.sh</div>
+        <div>cd backend &amp;&amp; npm run dev</div>
+        <div>cd frontend &amp;&amp; npm run dev</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification -->
+  <div id="toastBox" class="fixed bottom-5 right-5 z-50 pointer-events-none opacity-0 translate-y-2 transition-all duration-300 theme-surface border theme-border shadow-2xl rounded-xl px-4 py-3 text-xs font-semibold flex items-center gap-2.5">
+    <span class="w-2.5 h-2.5 rounded-full bg-blue-600"></span>
+    <span id="toastText">Notification</span>
+  </div>
+
+  <script>
+    // =========================================================================
+    // 1. SAFE STORAGE & CRYPTOGRAPHIC PASSWORD HASHING SERVICE
+    // =========================================================================
+    const StorageService = {
+      get(key, fallback) {
+        try {
+          const raw = localStorage.getItem(key);
+          return raw ? JSON.parse(raw) : fallback;
+        } catch {
+          return fallback;
+        }
+      },
+      set(key, value) {
+        try {
+          localStorage.setItem(key, JSON.stringify(value));
+        } catch {}
+      },
+      remove(key) {
+        try {
+          localStorage.removeItem(key);
+        } catch {}
+      }
+    };
+
+    async function hashPassword(password, salt = "collabspace_v2_salt") {
+      try {
+        if (window.crypto && window.crypto.subtle) {
+          const enc = new TextEncoder().encode(salt + ":" + password);
+          const buf = await window.crypto.subtle.digest("SHA-256", enc);
+          return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("");
+        }
+      } catch {}
+      let h = 2166136261;
+      const str = salt + ":" + password;
+      for (let i = 0; i < str.length; i++) {
+        h ^= str.charCodeAt(i);
+        h = Math.imul(h, 16777619);
+      }
+      return "sha256_sim_" + (h >>> 0).toString(16);
+    }
+
+    function showToast(message) {
+      const box = document.getElementById("toastBox");
+      const txt = document.getElementById("toastText");
+      txt.textContent = message;
+      box.classList.remove("opacity-0", "translate-y-2");
+      box.classList.add("opacity-100", "translate-y-0");
+      clearTimeout(window.__csToastTimer);
+      window.__csToastTimer = setTimeout(() => {
+        box.classList.add("opacity-0", "translate-y-2");
+        box.classList.remove("opacity-100", "translate-y-0");
+      }, 2800);
+    }
+
+    function copyToClipboard(text, successMsg) {
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(() => showToast(successMsg)).catch(() => fallbackCopy(text, successMsg));
+          return;
+        }
+      } catch {}
+      fallbackCopy(text, successMsg);
+    }
+
+    function fallbackCopy(text, successMsg) {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand("copy"); } catch {}
+      document.body.removeChild(ta);
+      showToast(successMsg);
+    }
+
+    // =========================================================================
+    // 2. THEME SYSTEM (ONLY LIGHT & DARK — COLOR REMOVED AS REQUESTED)
+    // =========================================================================
+    function applyTheme(themeName) {
+      const validTheme = themeName === "dark" ? "dark" : "light";
+      document.documentElement.setAttribute("data-theme", validTheme);
+      StorageService.set("cs_theme", validTheme);
+      const sel = document.getElementById("editorThemeSelect");
+      if (sel) sel.value = validTheme;
+    }
+
+    const savedTheme = StorageService.get("cs_theme", "light");
+    applyTheme(savedTheme === "dark" ? "dark" : "light");
+
+    document.querySelectorAll("[data-set-theme]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const t = btn.getAttribute("data-set-theme");
+        applyTheme(t);
+        showToast(`Switched to ${t === "dark" ? "Dark" : "Light"} Theme`);
+      });
+    });
+
+    document.getElementById("editorThemeSelect").addEventListener("change", (e) => {
+      applyTheme(e.target.value);
+      showToast(`Switched to ${e.target.value === "dark" ? "Dark" : "Light"} Theme`);
+    });
+
+    // =========================================================================
+    // 3. DATABASE MODELS IN LOCAL STORAGE (USERS, ROOMS, DOCUMENTS)
+    // =========================================================================
+    function getUsersDB() { return StorageService.get("cs_users_db", []); }
+    function saveUsersDB(users) { StorageService.set("cs_users_db", users); }
+    function getRoomsDB() { return StorageService.get("cs_rooms_db", {}); }
+    function saveRoomsDB(rooms) { StorageService.set("cs_rooms_db", rooms); }
+    function getDocsDB() { return StorageService.get("cs_docs_db", {}); }
+    function saveDocsDB(docs) { StorageService.set("cs_docs_db", docs); }
+
+    let currentUser = StorageService.get("cs_active_user", null);
+    let currentRoomId = null;
+    let crdtVersion = 1;
+    let coEditorInterval = null;
+    let mediaModalMode = "link";
+    let currentWorkspaceMode = "notes"; // 'notes' | 'split' | 'projector' | 'whiteboard'
+
+    // =========================================================================
+    // 4. PAGE NAVIGATION & WORKSPACE MODE SWITCHER
+    // =========================================================================
+    const pageAuth = document.getElementById("pageAuth");
+    const pageDashboard = document.getElementById("pageDashboard");
+    const pageEditor = document.getElementById("pageEditor");
+
+    function navigateTo(page) {
+      if ((page === "dashboard" || page === "editor") && !currentUser) {
+        showAuthFeedback("Please sign in or register to access CollabSpace rooms.", true);
+        page = "auth";
+      }
+      pageAuth.classList.add("hidden");
+      pageDashboard.classList.add("hidden");
+      pageEditor.classList.add("hidden");
+
+      if (page === "auth") {
+        pageAuth.classList.remove("hidden");
+      } else if (page === "dashboard") {
+        pageDashboard.classList.remove("hidden");
+        renderDashboard();
+      } else if (page === "editor") {
+        pageEditor.classList.remove("hidden");
+        setTimeout(() => resizeAllSketchCanvases(), 60);
+      }
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+
+    function setWorkspaceMode(mode) {
+      currentWorkspaceMode = mode;
+      const panelProjector = document.getElementById("panelReferenceProjector");
+      const panelNotes = document.getElementById("panelNotesEditor");
+      const panelWhiteboard = document.getElementById("panelPaintWhiteboard");
+      const grid = document.getElementById("workspacePanelsGrid");
+      const mainStageCol = document.getElementById("mainStageColumn");
+      const rightSidebarCol = document.getElementById("rightSidebarCol");
+      const sketchRibbon = document.getElementById("sketchToolbarRibbon");
+
+      const btnNotes = document.getElementById("btnModeNotes");
+      const btnSplit = document.getElementById("btnModeSplit");
+      const btnProjector = document.getElementById("btnModeProjector");
+      const btnWhiteboard = document.getElementById("btnModeWhiteboard");
+
+      [btnNotes, btnSplit, btnProjector, btnWhiteboard].forEach(b => {
+        b.className = "px-2.5 py-1.5 rounded-lg font-semibold theme-muted hover:opacity-90 transition flex items-center gap-1";
+      });
+
+      panelProjector.classList.add("hidden");
+      panelNotes.classList.add("hidden");
+      panelWhiteboard.classList.add("hidden");
+      grid.className = "grid grid-cols-1 gap-6";
+      mainStageCol.className = "lg:col-span-9 space-y-4";
+      rightSidebarCol.classList.remove("hidden");
+
+      if (mode === "notes") {
+        btnNotes.className = "px-2.5 py-1.5 rounded-lg font-semibold btn-accent text-white shadow-sm transition";
+        panelNotes.classList.remove("hidden");
+      } else if (mode === "split") {
+        btnSplit.className = "px-2.5 py-1.5 rounded-lg font-semibold btn-accent text-white shadow-sm transition";
+        panelProjector.classList.remove("hidden");
+        panelNotes.classList.remove("hidden");
+        grid.className = "grid grid-cols-1 lg:grid-cols-2 gap-5 items-start";
+        mainStageCol.className = "lg:col-span-12 space-y-4";
+        rightSidebarCol.classList.add("hidden");
+      } else if (mode === "projector") {
+        btnProjector.className = "px-2.5 py-1.5 rounded-lg font-semibold btn-accent text-white shadow-sm transition flex items-center gap-1";
+        panelProjector.classList.remove("hidden");
+      } else if (mode === "whiteboard") {
+        btnWhiteboard.className = "px-2.5 py-1.5 rounded-lg font-semibold btn-accent text-white shadow-sm transition";
+        panelWhiteboard.classList.remove("hidden");
+        sketchRibbon.classList.remove("hidden");
+      }
+
+      setTimeout(() => resizeAllSketchCanvases(), 60);
+    }
+
+    document.getElementById("btnModeNotes").addEventListener("click", () => setWorkspaceMode("notes"));
+    document.getElementById("btnModeSplit").addEventListener("click", () => setWorkspaceMode("split"));
+    document.getElementById("btnModeProjector").addEventListener("click", () => setWorkspaceMode("projector"));
+    document.getElementById("btnModeWhiteboard").addEventListener("click", () => setWorkspaceMode("whiteboard"));
+    document.getElementById("btnSwitchToSplitFromProjector").addEventListener("click", () => {
+      setWorkspaceMode("split");
+      showToast("Split-Screen Teaching View active: Reference file on left, Notes on right!");
+    });
+
+    // =========================================================================
+    // 5. PAGE 1: AUTHENTICATION LOGIC
+    // =========================================================================
+    const formLogin = document.getElementById("formLogin");
+    const formRegister = document.getElementById("formRegister");
+    const formReset = document.getElementById("formReset");
+    const authFeedbackBox = document.getElementById("authFeedbackBox");
+
+    function showAuthFeedback(msg, isError = true) {
+      authFeedbackBox.textContent = msg;
+      authFeedbackBox.className = isError
+        ? "p-3 rounded-xl text-xs font-medium border bg-red-50 border-red-200 text-red-700"
+        : "p-3 rounded-xl text-xs font-medium border bg-emerald-50 border-emerald-200 text-emerald-700";
+      authFeedbackBox.classList.remove("hidden");
+    }
+
+    function switchAuthMode(mode) {
+      authFeedbackBox.classList.add("hidden");
+      formLogin.classList.add("hidden");
+      formRegister.classList.add("hidden");
+      formReset.classList.add("hidden");
+
+      document.getElementById("authTabLogin").className = "flex-1 py-2 rounded-lg text-xs sm:text-sm font-semibold transition theme-muted";
+      document.getElementById("authTabRegister").className = "flex-1 py-2 rounded-lg text-xs sm:text-sm font-semibold transition theme-muted";
+      document.getElementById("authTabReset").className = "px-3 py-2 rounded-lg text-xs font-medium transition theme-muted";
+
+      if (mode === "login") {
+        formLogin.classList.remove("hidden");
+        document.getElementById("authTabLogin").className = "flex-1 py-2 rounded-lg text-xs sm:text-sm font-semibold transition btn-accent shadow-sm";
+      } else if (mode === "register") {
+        formRegister.classList.remove("hidden");
+        document.getElementById("authTabRegister").className = "flex-1 py-2 rounded-lg text-xs sm:text-sm font-semibold transition btn-accent shadow-sm";
+      } else {
+        formReset.classList.remove("hidden");
+        document.getElementById("authTabReset").className = "px-3 py-2 rounded-lg text-xs font-semibold transition btn-accent shadow-sm";
+      }
+    }
+
+    document.getElementById("authTabLogin").addEventListener("click", () => switchAuthMode("login"));
+    document.getElementById("authTabRegister").addEventListener("click", () => switchAuthMode("register"));
+    document.getElementById("authTabReset").addEventListener("click", () => switchAuthMode("reset"));
+    document.getElementById("linkToRegister").addEventListener("click", () => switchAuthMode("register"));
+    document.getElementById("linkToLogin").addEventListener("click", () => switchAuthMode("login"));
+    document.getElementById("btnSwitchToReset").addEventListener("click", () => switchAuthMode("reset"));
+
+    document.getElementById("btnToggleLoginPwd").addEventListener("click", (e) => {
+      const inp = document.getElementById("loginPassword");
+      const isPwd = inp.type === "password";
+      inp.type = isPwd ? "text" : "password";
+      e.target.textContent = isPwd ? "Hide" : "Show";
+    });
+
+    document.getElementById("btnToggleRegPwd").addEventListener("click", (e) => {
+      const inp = document.getElementById("regPassword");
+      const isPwd = inp.type === "password";
+      inp.type = isPwd ? "text" : "password";
+      e.target.textContent = isPwd ? "Hide" : "Show";
+    });
+
+    document.getElementById("regPassword").addEventListener("input", (e) => {
+      const val = e.target.value;
+      const bar = document.getElementById("pwdStrengthBar");
+      const lbl = document.getElementById("pwdStrengthLabel");
+      let score = 0;
+      if (val.length >= 8) score += 40;
+      if (/[A-Z]/.test(val) && /[a-z]/.test(val)) score += 30;
+      if (/[0-9]/.test(val) || /[^A-Za-z0-9]/.test(val)) score += 30;
+      bar.style.width = score + "%";
+      bar.className = score >= 70 ? "h-full bg-emerald-500 transition-all" : (score >= 40 ? "h-full bg-amber-500 transition-all" : "h-full bg-red-500 transition-all");
+      lbl.textContent = score >= 70 ? "Strong password ready." : "Use at least 8 characters with letters and numbers.";
+    });
+
+    formRegister.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fullName = document.getElementById("regFullName").value.trim();
+      const email = document.getElementById("regEmail").value.trim().toLowerCase();
+      const username = document.getElementById("regUsername").value.trim().toLowerCase();
+      const password = document.getElementById("regPassword").value;
+      const confirm = document.getElementById("regConfirmPassword").value;
+
+      if (fullName.length < 2) return showAuthFeedback("Please enter your full name.");
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return showAuthFeedback("Please enter a valid email address.");
+      if (username.length < 3) return showAuthFeedback("Username must be at least 3 characters.");
+      if (password.length < 8) return showAuthFeedback("Password must be at least 8 characters long.");
+      if (password !== confirm) return showAuthFeedback("Password and Confirm Password do not match.");
+
+      const users = getUsersDB();
+      if (users.some(u => u.email === email || u.username === username)) {
+        return showAuthFeedback("An account with this email or username already exists.");
+      }
+
+      const passwordHash = await hashPassword(password, email);
+      const newUser = { id: "usr_" + Date.now(), fullName, email, username, passwordHash, createdAt: new Date().toISOString() };
+      users.push(newUser);
+      saveUsersDB(users);
+
+      currentUser = { id: newUser.id, fullName, email, username };
+      StorageService.set("cs_active_user", currentUser);
+      showToast(`Welcome to CollabSpace, ${fullName}!`);
+      navigateTo("dashboard");
+    });
+
+    formLogin.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const identifier = document.getElementById("loginIdentifier").value.trim().toLowerCase();
+      const password = document.getElementById("loginPassword").value;
+
+      const users = getUsersDB();
+      const found = users.find(u => u.email === identifier || u.username === identifier);
+      if (!found) return showAuthFeedback("No registered account found with that email or username. Please register first.");
+
+      const candidateHash = await hashPassword(password, found.email);
+      if (candidateHash !== found.passwordHash) return showAuthFeedback("Invalid password. Please try again.");
+
+      currentUser = { id: found.id, fullName: found.fullName, email: found.email, username: found.username };
+      if (document.getElementById("loginRemember").checked) StorageService.set("cs_active_user", currentUser);
+      showToast(`Signed in as ${found.fullName}`);
+      navigateTo("dashboard");
+    });
+
+    formReset.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const identifier = document.getElementById("resetIdentifier").value.trim().toLowerCase();
+      const newPwd = document.getElementById("resetNewPassword").value;
+      if (newPwd.length < 8) return showAuthFeedback("New password must be at least 8 characters.");
+
+      const users = getUsersDB();
+      const idx = users.findIndex(u => u.email === identifier || u.username === identifier);
+      if (idx === -1) return showAuthFeedback("Account not found.");
+
+      users[idx].passwordHash = await hashPassword(newPwd, users[idx].email);
+      saveUsersDB(users);
+      showAuthFeedback("Password updated! You can now sign in.", false);
+      setTimeout(() => switchAuthMode("login"), 1200);
+    });
+
+    // =========================================================================
+    // 6. PAGE 2: DASHBOARD & ROOM MANAGEMENT
+    // =========================================================================
+    function generateRoomCode() {
+      return "CS-" + Math.floor(100000 + Math.random() * 900000);
+    }
+
+    function getInviteUrl(roomId) {
+      const base = window.location.href.split("?")[0];
+      return `${base}?room=${encodeURIComponent(roomId)}`;
+    }
+
+    function renderDashboard() {
+      if (!currentUser) return;
+      document.getElementById("welcomeUserName").textContent = currentUser.fullName;
+      document.getElementById("dashUserName").textContent = currentUser.fullName;
+      document.getElementById("dashUserEmail").textContent = currentUser.email;
+      document.getElementById("dashUserAvatar").textContent = currentUser.fullName.charAt(0).toUpperCase();
+
+      const roomsMap = getRoomsDB();
+      const docsMap = getDocsDB();
+      const roomList = Object.values(roomsMap).sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+
+      document.getElementById("recentRoomsCount").textContent = `${roomList.length} Room${roomList.length === 1 ? "" : "s"}`;
+      const grid = document.getElementById("recentRoomsGrid");
+
+      if (roomList.length === 0) {
+        grid.innerHTML = `
+          <div class="col-span-full p-6 rounded-2xl theme-subtle border theme-border text-center space-y-2">
+            <div class="text-sm font-bold">No rooms created yet</div>
+            <p class="text-xs theme-muted">Use the "Create a Collaborative Room" card above or launch a sample room to start editing.</p>
+          </div>
+        `;
+        return;
+      }
+
+      grid.innerHTML = roomList.map(r => {
+        const doc = docsMap[r.roomId] || {};
+        const lastEdited = new Date(doc.updatedAt || r.updatedAt).toLocaleString();
+        const isOwner = r.ownerId === currentUser.id;
+        return `
+          <div class="theme-surface border theme-border rounded-2xl p-5 shadow-sm hover:shadow-md transition flex flex-col justify-between space-y-4">
+            <div class="space-y-1.5">
+              <div class="flex items-center justify-between gap-2">
+                <span class="font-mono text-xs font-bold px-2.5 py-0.5 rounded-md theme-subtle border theme-border">${r.roomId}</span>
+                <span class="text-[11px] font-semibold px-2 py-0.5 rounded-full ${isOwner ? 'bg-blue-100 text-blue-800' : 'bg-emerald-100 text-emerald-800'}">
+                  ${isOwner ? 'Owner' : (r.access === 'readonly' ? 'Read-Only' : 'Collaborator')}
+                </span>
+              </div>
+              <h3 class="font-bold text-base truncate">${doc.title || r.name}</h3>
+              <p class="text-xs theme-muted line-clamp-2">${r.description || 'Collaborative document & file projection workspace'}</p>
+            </div>
+            <div class="pt-3 border-t theme-border flex items-center justify-between gap-2 text-xs">
+              <span class="text-[11px] theme-muted">Edited: ${lastEdited}</span>
+              <div class="flex items-center gap-1.5">
+                <button type="button" data-copy-room="${r.roomId}" class="px-2.5 py-1 rounded-lg border theme-border font-semibold hover:opacity-80">
+                  Copy Link
+                </button>
+                <button type="button" data-open-room="${r.roomId}" class="px-3 py-1 rounded-lg btn-accent text-white font-semibold">
+                  Open &rarr;
+                </button>
+              </div>
+            </div>
+          </div>
+        `;
+      }).join("");
+
+      grid.querySelectorAll("[data-open-room]").forEach(btn => {
+        btn.addEventListener("click", () => openRoomInEditor(btn.getAttribute("data-open-room")));
+      });
+      grid.querySelectorAll("[data-copy-room]").forEach(btn => {
+        btn.addEventListener("click", () => {
+          const rid = btn.getAttribute("data-copy-room");
+          copyToClipboard(getInviteUrl(rid), `Copied invite link for ${rid}`);
+        });
+      });
+    }
+
+    function createAndPersistRoom(name, description, access = "edit") {
+      const roomId = generateRoomCode();
+      const now = new Date().toISOString();
+      const rooms = getRoomsDB();
+      const docs = getDocsDB();
+
+      rooms[roomId] = {
+        roomId,
+        name,
+        description,
+        ownerId: currentUser.id,
+        ownerName: currentUser.fullName,
+        authorizedMembers: [currentUser.id],
+        access,
+        createdAt: now,
+        updatedAt: now
+      };
+
+      docs[roomId] = {
+        documentId: "doc_" + roomId,
+        roomId,
+        title: name,
+        contentHtml: `<h1>${name}</h1><p>${description || "Use this collaborative Notes Page to write notes while projecting reference PDFs, Word documents, or diagrams on the Reference File Page."}</p><h2>Quick Lecture &amp; Meeting Notes</h2><ul><li>Click <strong>Upload &amp; Project File</strong> to project any PDF, DOCX, Markdown, HTML, or Image in full visual layout</li><li>Switch to <strong>Split View (File + Notes)</strong> to teach or study with the reference file and notes side-by-side</li><li>Click <strong>Draw on Screen</strong> or <strong>Paint &amp; Sketchboard</strong> to draw with your cursor</li></ul>`,
+        projectedFile: null,
+        annotations: [],
+        crdtVersion: 1,
+        updatedAt: now
+      };
+
+      saveRoomsDB(rooms);
+      saveDocsDB(docs);
+      return roomId;
+    }
+
+    let pendingPreviewRoomId = null;
+    document.getElementById("btnPreviewLinkOnly").addEventListener("click", () => {
+      const name = document.getElementById("inputRoomName").value.trim() || "Untitled Team Room";
+      const desc = document.getElementById("inputRoomDesc").value.trim();
+      const access = document.getElementById("inputRoomAccess").value;
+      pendingPreviewRoomId = createAndPersistRoom(name, desc, access);
+
+      const box = document.getElementById("createdRoomPreview");
+      document.getElementById("previewRoomId").textContent = pendingPreviewRoomId;
+      document.getElementById("previewInviteUrl").textContent = getInviteUrl(pendingPreviewRoomId);
+      box.classList.remove("hidden");
+      renderDashboard();
+      showToast(`Created room ${pendingPreviewRoomId} and generated invite link!`);
+    });
+
+    document.getElementById("btnCopyPreviewInvite").addEventListener("click", () => {
+      if (pendingPreviewRoomId) {
+        copyToClipboard(getInviteUrl(pendingPreviewRoomId), `Invitation link for ${pendingPreviewRoomId} copied!`);
+      }
+    });
+
+    document.getElementById("formCreateRoom").addEventListener("submit", (e) => {
+      e.preventDefault();
+      const name = document.getElementById("inputRoomName").value.trim();
+      const desc = document.getElementById("inputRoomDesc").value.trim();
+      const access = document.getElementById("inputRoomAccess").value;
+      if (!name) return;
+
+      const roomId = pendingPreviewRoomId || createAndPersistRoom(name, desc, access);
+      pendingPreviewRoomId = null;
+      document.getElementById("createdRoomPreview").classList.add("hidden");
+      document.getElementById("formCreateRoom").reset();
+      openRoomInEditor(roomId);
+    });
+
+    document.getElementById("btnQuickDemoRoom").addEventListener("click", () => {
+      const roomId = createAndPersistRoom(
+        "Distributed Systems Lecture & Live Notes",
+        "Interactive session with projected reference file and cursor paint/sketch tools",
+        "edit"
+      );
+      openRoomInEditor(roomId);
+    });
+
+    document.getElementById("formJoinRoom").addEventListener("submit", (e) => {
+      e.preventDefault();
+      const raw = document.getElementById("inputJoinRoomId").value.trim();
+      const errBox = document.getElementById("joinRoomErrorBox");
+      errBox.classList.add("hidden");
+
+      let extractedId = raw;
+      if (raw.includes("room=")) {
+        extractedId = decodeURIComponent(raw.split("room=").pop().split("&")[0]);
+      } else if (raw.includes("/")) {
+        extractedId = raw.split("/").pop();
+      }
+      extractedId = extractedId.toUpperCase().trim();
+
+      if (!/^CS-\d{6}$/.test(extractedId)) {
+        errBox.textContent = "Invalid Room ID format. Expected format: CS-XXXXXX (e.g., CS-482910) or a valid invitation URL.";
+        errBox.classList.remove("hidden");
+        return;
+      }
+
+      const rooms = getRoomsDB();
+      if (!rooms[extractedId]) {
+        errBox.textContent = `Room ${extractedId} was not found on this device. Create it first or join from a synced browser tab.`;
+        errBox.classList.remove("hidden");
+        return;
+      }
+
+      if (!rooms[extractedId].authorizedMembers.includes(currentUser.id)) {
+        rooms[extractedId].authorizedMembers.push(currentUser.id);
+        rooms[extractedId].updatedAt = new Date().toISOString();
+        saveRoomsDB(rooms);
+      }
+
+      openRoomInEditor(extractedId);
+    });
+
+    document.getElementById("btnDashLogout").addEventListener("click", () => {
+      currentUser = null;
+      StorageService.remove("cs_active_user");
+      showToast("Logged out safely.");
+      navigateTo("auth");
+    });
+
+    // =========================================================================
+    // 7. PAGE 3: COLLABORATIVE EDITOR, FULL-FORMAT PROJECTOR & SKETCH STUDIO
+    // =========================================================================
+    const richTextEditor = document.getElementById("richTextEditor");
+    const editorDocTitle = document.getElementById("editorDocTitle");
+    let suppressEditorBroadcast = false;
+    let connectionState = "Connected";
+
+    let collabChannel = null;
+    try {
+      if (typeof BroadcastChannel !== "undefined") {
+        collabChannel = new BroadcastChannel("collabspace_realtime_crdt_bus");
+        collabChannel.onmessage = (event) => {
+          const msg = event.data;
+          if (!msg || msg.roomId !== currentRoomId) return;
+          if (connectionState === "Offline") return;
+
+          if (msg.type === "DOC_DELTA") {
+            suppressEditorBroadcast = true;
+            if (richTextEditor.innerHTML !== msg.contentHtml) {
+              richTextEditor.innerHTML = msg.contentHtml;
+            }
+            if (msg.title && editorDocTitle.value !== msg.title) {
+              editorDocTitle.value = msg.title;
+            }
+            crdtVersion = Math.max(crdtVersion, msg.crdtVersion || 1);
+            updateEditorCounters();
+            suppressEditorBroadcast = false;
+            document.getElementById("remoteCursorIndicator").textContent = `${msg.userName} edited @ v${crdtVersion}`;
+          } else if (msg.type === "PROJECTED_FILE_SYNC" && msg.projectedFile) {
+            renderProjectedFileFromRecord(msg.projectedFile, false);
+            showToast(`${msg.userName} projected "${msg.projectedFile.name}"`);
+          } else if (msg.type === "SKETCH_SYNC" && msg.targetCanvasId && msg.dataUrl) {
+            const c = document.getElementById(msg.targetCanvasId);
+            if (c) {
+              const img = new Image();
+              img.onload = () => {
+                const ctx = c.getContext("2d");
+                ctx.clearRect(0, 0, c.width, c.height);
+                ctx.drawImage(img, 0, 0);
+              };
+              img.src = msg.dataUrl;
+            }
+          }
+        };
+      }
+    } catch {}
+
+    function openRoomInEditor(roomId) {
+      const rooms = getRoomsDB();
+      const docs = getDocsDB();
+      const room = rooms[roomId];
+      const doc = docs[roomId];
+      if (!room || !doc) {
+        showToast("Room could not be loaded.");
+        return;
+      }
+
+      currentRoomId = roomId;
+      crdtVersion = doc.crdtVersion || 1;
+      editorDocTitle.value = doc.title || room.name;
+      document.getElementById("editorRoomIdDisplay").textContent = roomId;
+
+      const isOwner = room.ownerId === currentUser.id;
+      const isReadOnly = !isOwner && room.access === "readonly";
+      const roleBadge = document.getElementById("editorRoleBadge");
+      roleBadge.textContent = isOwner ? "Owner / Host" : (isReadOnly ? "Read-Only" : "Collaborator");
+      roleBadge.className = isOwner
+        ? "text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-blue-100 text-blue-800"
+        : (isReadOnly ? "text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-amber-100 text-amber-800" : "text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800");
+
+      richTextEditor.contentEditable = isReadOnly ? "false" : "true";
+      editorDocTitle.disabled = isReadOnly;
+
+      suppressEditorBroadcast = true;
+      richTextEditor.innerHTML = doc.contentHtml || "<p>Start typing here...</p>";
+      suppressEditorBroadcast = false;
+
+      if (doc.projectedFile) {
+        renderProjectedFileFromRecord(doc.projectedFile, false);
+      } else {
+        resetProjectorToEmpty();
+      }
+
+      renderCollaboratorsList([
+        { name: currentUser.fullName + " (You)", color: "#2563eb", role: isOwner ? "Host" : "Editor" }
+      ]);
+      renderAnnotations();
+      updateEditorCounters();
+      setWorkspaceMode(doc.projectedFile ? "split" : "notes");
+      navigateTo("editor");
+    }
+
+    function persistCurrentDocAndBroadcast() {
+      if (!currentRoomId || suppressEditorBroadcast) return;
+      const docs = getDocsDB();
+      const rooms = getRoomsDB();
+      if (!docs[currentRoomId]) return;
+
+      crdtVersion++;
+      const now = new Date().toISOString();
+      docs[currentRoomId].title = editorDocTitle.value.trim() || "Untitled Document";
+      docs[currentRoomId].contentHtml = richTextEditor.innerHTML;
+      docs[currentRoomId].crdtVersion = crdtVersion;
+      docs[currentRoomId].updatedAt = now;
+      if (rooms[currentRoomId]) rooms[currentRoomId].updatedAt = now;
+
+      saveDocsDB(docs);
+      saveRoomsDB(rooms);
+
+      const saveBadge = document.getElementById("editorSaveStatus");
+      if (connectionState === "Connected") {
+        saveBadge.textContent = "✓ Saved & Synced";
+        saveBadge.className = "text-emerald-600 font-medium";
+        if (collabChannel) {
+          try {
+            collabChannel.postMessage({
+              type: "DOC_DELTA",
+              roomId: currentRoomId,
+              userName: currentUser.fullName,
+              title: docs[currentRoomId].title,
+              contentHtml: docs[currentRoomId].contentHtml,
+              crdtVersion
+            });
+          } catch {}
+        }
+      } else {
+        saveBadge.innerHTML = `<span class="inline-flex items-center gap-1">${svgs.pauseCircle || svgs.sparkles} Buffered Locally (${connectionState})</span>`;
+        saveBadge.className = "text-amber-600 font-medium";
+      }
+      updateEditorCounters();
+    }
+
+    function updateEditorCounters() {
+      const plain = richTextEditor.innerText || "";
+      const words = plain.trim() ? plain.trim().split(/\s+/).length : 0;
+      document.getElementById("editorWordCount").textContent = `Words: ${words} | Characters: ${plain.length}`;
+      document.getElementById("editorCrdtClock").textContent = `CRDT State Vector: v${crdtVersion} • Room Persisted`;
+    }
+
+    richTextEditor.addEventListener("input", () => persistCurrentDocAndBroadcast());
+    editorDocTitle.addEventListener("input", () => persistCurrentDocAndBroadcast());
+
+    // =========================================================================
+    // 8. FULL-FORMAT FILE PROJECTOR (PROJECTS PDF PAGES, DOCX, HTML, MD, IMAGES)
+    //    Opens in the dedicated Reference Projector Page / Split-Screen Mode
+    //    so your Notes Editor stays clean for note-taking & teaching!
+    // =========================================================================
+    const modalImport = document.getElementById("modalImport");
+    const importErrorBox = document.getElementById("importErrorBox");
+
+    document.getElementById("btnOpenImportModal").addEventListener("click", () => {
+      importErrorBox.classList.add("hidden");
+      modalImport.classList.remove("hidden");
+    });
+    document.getElementById("btnSidebarUpload").addEventListener("click", () => {
+      importErrorBox.classList.add("hidden");
+      modalImport.classList.remove("hidden");
+    });
+    document.getElementById("btnEmptyUploadTrigger").addEventListener("click", () => {
+      importErrorBox.classList.add("hidden");
+      modalImport.classList.remove("hidden");
+    });
+    document.getElementById("btnCloseImportModal").addEventListener("click", () => modalImport.classList.add("hidden"));
+
+    function resetProjectorToEmpty() {
+      document.getElementById("projectorEmptyState").classList.remove("hidden");
+      const host = document.getElementById("projectedContentHost");
+      host.classList.add("hidden");
+      host.innerHTML = "";
+      document.getElementById("projectedFileName").textContent = "No file uploaded yet";
+      document.getElementById("projectedFileTypeBadge").textContent = "READY";
+      document.getElementById("projectorFileBadge").classList.add("hidden");
+      document.getElementById("uploadedFilesSidebarList").innerHTML = `<div class="text-slate-400 italic">No reference file projected yet.</div>`;
+    }
+
+    function renderProjectedFileFromRecord(record, switchView = true) {
+      const emptyState = document.getElementById("projectorEmptyState");
+      const host = document.getElementById("projectedContentHost");
+      emptyState.classList.add("hidden");
+      host.classList.remove("hidden");
+
+      document.getElementById("projectedFileName").textContent = record.name;
+      document.getElementById("projectedFileTypeBadge").textContent = (record.ext || "FILE").toUpperCase();
+      document.getElementById("projectorFileBadge").classList.remove("hidden");
+
+      host.innerHTML = record.projectedHtml;
+
+      document.getElementById("uploadedFilesSidebarList").innerHTML = `
+        <div class="p-2.5 rounded-xl bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800 flex items-center justify-between gap-2">
+          <div class="truncate">
+            <div class="font-bold text-indigo-950 dark:text-indigo-200 truncate">${record.name}</div>
+            <div class="text-[10px] text-indigo-600 dark:text-indigo-400">${record.ext.toUpperCase()} • Projected in Full Layout</div>
+          </div>
+          <button type="button" id="btnSidebarFocusProjector" class="px-2 py-1 rounded-lg bg-indigo-600 text-white text-[10px] font-bold shrink-0">
+            View
+          </button>
+        </div>
+      `;
+      const viewBtn = document.getElementById("btnSidebarFocusProjector");
+      if (viewBtn) {
+        viewBtn.addEventListener("click", () => setWorkspaceMode("split"));
+      }
+
+      if (switchView) {
+        const selectedTarget = document.querySelector('input[name="uploadOpenTarget"]:checked')?.value || "split";
+        setWorkspaceMode(selectedTarget);
+      }
+      setTimeout(() => resizeAllSketchCanvases(), 100);
+    }
+
+    function saveProjectedRecordToRoom(record) {
+      if (!currentRoomId) return;
+      const docs = getDocsDB();
+      if (docs[currentRoomId]) {
+        docs[currentRoomId].projectedFile = record;
+        saveDocsDB(docs);
+      }
+      if (collabChannel && connectionState === "Connected") {
+        try {
+          collabChannel.postMessage({
+            type: "PROJECTED_FILE_SYNC",
+            roomId: currentRoomId,
+            userName: currentUser.fullName,
+            projectedFile: record
+          });
+        } catch {}
+      }
+    }
+
+    function markdownToFullStyledHtml(md) {
+      let html = md
+        .replace(/^### (.*$)/gim, "<h3>$1</h3>")
+        .replace(/^## (.*$)/gim, "<h2>$1</h2>")
+        .replace(/^# (.*$)/gim, "<h1>$1</h1>")
+        .replace(/\*\*(.*?)\*\*/gim, "<strong>$1</strong>")
+        .replace(/\*(.*?)\*/gim, "<em>$1</em>")
+        .replace(/`([^`]+)`/g, "<code class='px-1.5 py-0.5 rounded bg-slate-100 font-mono text-xs text-pink-600'>$1</code>")
+        .replace(/^- (.*$)/gim, "<li>$1</li>");
+      html = html.replace(/(<li>.*<\/li>)/gs, "<ul>$1</ul>");
+      return html.split(/\n\n+/).map(block => {
+        if (block.trim().startsWith("<h") || block.trim().startsWith("<ul")) return block;
+        return `<p>${block.replace(/\n/g, "<br/>")}</p>`;
+      }).join("");
+    }
+
+    async function renderPdfPagesToHtmlDataUrls(file) {
+      if (!window.pdfjsLib) throw new Error("PDF.js unavailable");
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+      const buf = await file.arrayBuffer();
+      const pdf = await window.pdfjsLib.getDocument({ data: buf }).promise;
+      const pageCards = [];
+      let extractedPlainText = [];
+
+      for (let p = 1; p <= pdf.numPages; p++) {
+        const page = await pdf.getPage(p);
+        const viewport = page.getViewport({ scale: 1.5 });
+        const offCanvas = document.createElement("canvas");
+        offCanvas.width = viewport.width;
+        offCanvas.height = viewport.height;
+        const ctx = offCanvas.getContext("2d");
+        await page.render({ canvasContext: ctx, viewport }).promise;
+        const pageDataUrl = offCanvas.toDataURL("image/png");
+
+        const textContent = await page.getTextContent();
+        const pageText = textContent.items.map(it => it.str).join(" ");
+        extractedPlainText.push(`<h3>Page ${p}</h3><p>${pageText}</p>`);
+
+        pageCards.push(`
+          <div class="projected-sheet p-4 space-y-2 border border-slate-300">
+            <div class="flex items-center justify-between text-xs text-slate-500 border-b pb-2">
+              <span class="font-bold text-slate-700">${file.name} — Page ${p} of ${pdf.numPages}</span>
+              <span class="font-mono">Exact PDF Visual Projection</span>
+            </div>
+            <img src="${pageDataUrl}" alt="Projected PDF Page ${p}" class="w-full h-auto rounded border border-slate-200 shadow-sm" />
+          </div>
+        `);
+      }
+
+      return {
+        projectedHtml: pageCards.join(""),
+        extractedTextHtml: extractedPlainText.join("")
+      };
+    }
+
+    async function processImportedFile(file) {
+      importErrorBox.classList.add("hidden");
+      const maxBytes = 20 * 1024 * 1024;
+      if (file.size > maxBytes) {
+        importErrorBox.textContent = "File exceeds the 20 MB limit.";
+        importErrorBox.classList.remove("hidden");
+        return;
+      }
+
+      const ext = (file.name.split(".").pop() || "").toLowerCase();
+      try {
+        let projectedHtml = "";
+        let extractedTextHtml = "";
+
+        if (ext === "pdf") {
+          showToast(`Rendering ${file.name} pages in high-resolution visual format...`);
+          const pdfResult = await renderPdfPagesToHtmlDataUrls(file);
+          projectedHtml = pdfResult.projectedHtml;
+          extractedTextHtml = pdfResult.extractedTextHtml;
+        } else if (ext === "docx" || ext === "doc") {
+          if (window.mammoth) {
+            const arrayBuffer = await file.arrayBuffer();
+            const res = await window.mammoth.convertToHtml({ arrayBuffer });
+            extractedTextHtml = res.value || "<p>(Document loaded)</p>";
+            projectedHtml = `<div class="projected-sheet p-8 sm:p-12">${extractedTextHtml}</div>`;
+          } else {
+            const txt = await file.text();
+            extractedTextHtml = `<p>${txt}</p>`;
+            projectedHtml = `<div class="projected-sheet p-8 sm:p-12">${extractedTextHtml}</div>`;
+          }
+        } else if (["png", "jpg", "jpeg", "svg", "webp", "gif"].includes(ext)) {
+          const dataUrl = await new Promise((resolve, reject) => {
+            const r = new FileReader();
+            r.onload = () => resolve(r.result);
+            r.onerror = reject;
+            r.readAsDataURL(file);
+          });
+          projectedHtml = `
+            <div class="projected-sheet p-6 text-center space-y-3">
+              <div class="text-xs font-bold text-slate-500">${file.name} (Projected Visual Asset)</div>
+              <img src="${dataUrl}" alt="${file.name}" class="max-w-full h-auto mx-auto rounded-lg shadow" />
+            </div>
+          `;
+          extractedTextHtml = `<p><img src="${dataUrl}" alt="${file.name}" /></p>`;
+        } else if (ext === "html" || ext === "htm") {
+          const rawHtml = await file.text();
+          const bodyMatch = rawHtml.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+          const inner = bodyMatch ? bodyMatch[1] : rawHtml;
+          extractedTextHtml = inner;
+          projectedHtml = `<div class="projected-sheet p-8 sm:p-12">${inner}</div>`;
+        } else if (ext === "md") {
+          const md = await file.text();
+          const styled = markdownToFullStyledHtml(md);
+          extractedTextHtml = styled;
+          projectedHtml = `<div class="projected-sheet p-8 sm:p-12">${styled}</div>`;
+        } else {
+          // .txt, .rtf, or general text files — preserve exact line breaks, indentation & tables
+          const txt = await file.text();
+          const escaped = txt.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+          extractedTextHtml = `<pre style="white-space: pre-wrap; font-family: 'Inter', sans-serif; background: transparent; color: inherit; padding: 0;">${escaped}</pre>`;
+          projectedHtml = `<div class="projected-sheet p-8 sm:p-12"><pre style="white-space: pre-wrap; font-family: 'Inter', sans-serif; font-size: 0.95rem; line-height: 1.75; color: #0f172a;">${escaped}</pre></div>`;
+        }
+
+        const record = {
+          name: file.name,
+          ext,
+          projectedHtml,
+          extractedTextHtml,
+          uploadedAt: new Date().toISOString()
+        };
+
+        saveProjectedRecordToRoom(record);
+        renderProjectedFileFromRecord(record, true);
+        modalImport.classList.add("hidden");
+        showToast(`Projected "${file.name}" with full visual formatting! Take notes alongside it.`);
+      } catch (err) {
+        importErrorBox.textContent = `Could not render ${file.name}. Ensure the file is valid and not password-protected.`;
+        importErrorBox.classList.remove("hidden");
+      }
+    }
+
+    document.getElementById("filePickerInput").addEventListener("change", (e) => {
+      const f = e.target.files?.[0];
+      if (f) processImportedFile(f);
+      e.target.value = "";
+    });
+
+    ["dragover", "drop"].forEach(evtName => {
+      window.addEventListener(evtName, (e) => e.preventDefault());
+    });
+
+    document.getElementById("importDropArea").addEventListener("drop", (e) => {
+      const f = e.dataTransfer?.files?.[0];
+      if (f) processImportedFile(f);
+    });
+
+    document.getElementById("editorDropZone").addEventListener("drop", (e) => {
+      const f = e.dataTransfer?.files?.[0];
+      if (f) processImportedFile(f);
+    });
+
+    // Optional button: Copy projected file text into the Notes Editor if the user wants to edit its text directly
+    document.getElementById("btnCopyProjectedToNotes").addEventListener("click", () => {
+      const docs = getDocsDB();
+      const proj = docs[currentRoomId]?.projectedFile;
+      if (!proj) {
+        showToast("Upload or load a reference file first.");
+        return;
+      }
+      richTextEditor.insertAdjacentHTML("beforeend", `<hr class="my-4"/><h2>Reference Excerpt: ${proj.name}</h2>${proj.extractedTextHtml}`);
+      persistCurrentDocAndBroadcast();
+      showToast("Copied formatted content into your Notes Editor!");
+    });
+
+    // Built-in Visual Reference Samples (Demonstrates full visual layout projection!)
+    function loadBuiltInSampleProjection(kind) {
+      let record = null;
+      if (kind === "pdf") {
+        const html = `
+          <div class="projected-sheet p-8 space-y-6 border border-slate-300">
+            <div class="flex items-center justify-between border-b-2 border-indigo-600 pb-4">
+              <div>
+                <span class="px-2.5 py-1 rounded bg-indigo-600 text-white text-xs font-bold uppercase">CS-402 Lecture Handout (PDF Page 1 of 2)</span>
+                <h1 class="mt-2">Distributed Consensus, CRDTs &amp; Real-Time Synchronization</h1>
+              </div>
+              <div class="text-right text-xs text-slate-500 font-mono">
+                <div>Prof. R. Subramanian</div>
+                <div>Dept. of Computer Science</div>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 bg-slate-50 p-4 rounded-xl border border-slate-200">
+              <div>
+                <h3 class="text-indigo-700 font-bold">1. State-Based vs. Op-Based CRDTs</h3>
+                <p class="text-sm text-slate-700">
+                  In a <strong>Conflict-Free Replicated Data Type (CRDT)</strong>, concurrent updates commute. Every character insertion is assigned a fractional coordinate between its neighbors so replicas converge deterministically without a central lock manager.
+                </p>
+              </div>
+              <div class="bg-white p-3 rounded-lg border border-slate-200 flex flex-col items-center justify-center">
+                <svg viewBox="0 0 320 130" class="w-full h-auto">
+                  <rect x="10" y="15" width="90" height="40" rx="8" fill="#dbeafe" stroke="#2563eb" stroke-width="2"/>
+                  <text x="55" y="40" text-anchor="middle" font-size="11" font-weight="bold" fill="#1e40af">Replica A</text>
+                  <rect x="220" y="15" width="90" height="40" rx="8" fill="#d1fae5" stroke="#059669" stroke-width="2"/>
+                  <text x="265" y="40" text-anchor="middle" font-size="11" font-weight="bold" fill="#065f46">Replica B</text>
+                  <line x1="100" y1="35" x2="220" y2="35" stroke="#6366f1" stroke-width="2" stroke-dasharray="4,4"/>
+                  <rect x="85" y="80" width="150" height="36" rx="8" fill="#fef3c7" stroke="#d97706" stroke-width="2"/>
+                  <text x="160" y="102" text-anchor="middle" font-size="11" font-weight="bold" fill="#92400e">Merged State Vector</text>
+                  <line x1="55" y1="55" x2="120" y2="80" stroke="#2563eb" stroke-width="2"/>
+                  <line x1="265" y1="55" x2="200" y2="80" stroke="#059669" stroke-width="2"/>
+                </svg>
+              </div>
+            </div>
+
+            <table>
+              <thead>
+                <tr class="bg-indigo-50 text-indigo-950">
+                  <th>Property</th>
+                  <th>Operational Transformation (OT)</th>
+                  <th>Yjs / LSEQ CRDT</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Central Server Required?</strong></td>
+                  <td>Yes (for total ordering)</td>
+                  <td>No (Peer-to-Peer &amp; Server supported)</td>
+                </tr>
+                <tr>
+                  <td><strong>Time Complexity (Insert)</strong></td>
+                  <td>O(N) transformation against history</td>
+                  <td>O(log N) B-Tree lookup</td>
+                </tr>
+                <tr>
+                  <td><strong>Offline Editing</strong></td>
+                  <td>Complex state rebase</td>
+                  <td>Native state-vector delta merge</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        `;
+        record = {
+          name: "CS402_Distributed_Systems_Lecture.pdf",
+          ext: "pdf",
+          projectedHtml: html,
+          extractedTextHtml: html,
+          uploadedAt: new Date().toISOString()
+        };
+      } else if (kind === "docx") {
+        const html = `
+          <div class="projected-sheet p-8 sm:p-10 space-y-4 border border-slate-300">
+            <div class="text-xs font-bold uppercase tracking-wider text-blue-600">Microsoft Word (.DOCX) Full Layout Projection</div>
+            <h1>System Design &amp; Architecture Specification</h1>
+            <p>This Word document is projected in its full formatted layout on the Reference Page so you can read, teach, or mark it up with the cursor sketch tool while writing your own notes in the Notes Editor.</p>
+            <h2>Milestone Schedule</h2>
+            <table>
+              <thead>
+                <tr class="bg-slate-100"><th>Phase</th><th>Deliverable</th><th>Status</th></tr>
+              </thead>
+              <tbody>
+                <tr><td>Phase 1</td><td>Authentication &amp; Room Security</td><td>Completed</td></tr>
+                <tr><td>Phase 2</td><td>Full-Format File Projector &amp; Split Teaching View</td><td>Completed</td></tr>
+                <tr><td>Phase 3</td><td>Interactive Paint &amp; Cursor Sketch Studio</td><td>Completed</td></tr>
+              </tbody>
+            </table>
+          </div>
+        `;
+        record = {
+          name: "Architecture_Specification_v3.docx",
+          ext: "docx",
+          projectedHtml: html,
+          extractedTextHtml: html,
+          uploadedAt: new Date().toISOString()
+        };
+      } else {
+        const html = `
+          <div class="projected-sheet p-8 sm:p-10 space-y-4 border border-slate-300">
+            <h1> Teaching &amp; Study Reference Guide (.MD)</h1>
+            <p>Use the <strong>Draw / Mark on File</strong> button above to circle key formulas or underline sentences directly with your cursor while presenting!</p>
+            <ul>
+              <li><strong>Pen Tool:</strong> Freehand writing and circling</li>
+              <li><strong>Marker Tool:</strong> Translucent highlighter strokes over text and diagrams</li>
+              <li><strong>Arrow &amp; Box Tools:</strong> Point out key table rows or architecture blocks</li>
+            </ul>
+          </div>
+        `;
+        record = {
+          name: "Teaching_Reference_Sheet.md",
+          ext: "md",
+          projectedHtml: html,
+          extractedTextHtml: html,
+          uploadedAt: new Date().toISOString()
+        };
+      }
+
+      saveProjectedRecordToRoom(record);
+      renderProjectedFileFromRecord(record, true);
+      modalImport.classList.add("hidden");
+      showToast(`Projected "${record.name}" in Split-Screen Teaching Mode!`);
+    }
+
+    document.querySelectorAll("[data-sample-import]").forEach(btn => {
+      btn.addEventListener("click", () => loadBuiltInSampleProjection(btn.getAttribute("data-sample-import")));
+    });
+    document.getElementById("btnEmptyLoadSampleLecture").addEventListener("click", () => loadBuiltInSampleProjection("pdf"));
+
+    // =========================================================================
+    // 9. INTERACTIVE PAINT & CURSOR SKETCH ENGINE
+    //    Supports drawing directly over:
+    //    1. The Projected Reference File (`projectorSketchCanvas`)
+    //    2. The Collaborative Notes Page (`notesOverlayCanvas`)
+    //    3. The Dedicated Paint & Sketchboard (`whiteboardCanvas`)
+    // =========================================================================
+    let overlaySketchEnabled = false;
+    let currentSketchTool = "pen"; // 'pen' | 'marker' | 'line' | 'arrow' | 'rect' | 'circle' | 'eraser'
+    let currentSketchColor = "#ef4444";
+    let currentSketchSize = 4;
+    let whiteboardShowGrid = false;
+
+    const canvasHistories = {
+      projectorSketchCanvas: [],
+      notesOverlayCanvas: [],
+      whiteboardCanvas: []
+    };
+    let lastActiveCanvasId = "whiteboardCanvas";
+
+    function resizeAllSketchCanvases() {
+      // 1. Projector overlay canvas
+      const projHost = document.getElementById("projectedContentHost");
+      const projWrapper = document.getElementById("projectedViewportWrapper");
+      const projCanvas = document.getElementById("projectorSketchCanvas");
+      if (projCanvas && projWrapper) {
+        const w = Math.max(projWrapper.scrollWidth, projWrapper.clientWidth, 700);
+        const h = Math.max(projHost.scrollHeight + 80, projWrapper.clientHeight, 600);
+        if (projCanvas.width !== w || projCanvas.height !== h) {
+          const snapshot = projCanvas.toDataURL();
+          projCanvas.width = w;
+          projCanvas.height = h;
+          projCanvas.style.width = w + "px";
+          projCanvas.style.height = h + "px";
+          restoreDataUrlToCanvas(projCanvas, snapshot);
+        }
+      }
+
+      // 2. Notes overlay canvas
+      const notesWrapper = document.getElementById("notesPaperWrapper");
+      const notesCanvas = document.getElementById("notesOverlayCanvas");
+      if (notesCanvas && notesWrapper) {
+        const w = Math.max(notesWrapper.clientWidth, 600);
+        const h = Math.max(notesWrapper.scrollHeight, 640);
+        if (notesCanvas.width !== w || notesCanvas.height !== h) {
+          const snapshot = notesCanvas.toDataURL();
+          notesCanvas.width = w;
+          notesCanvas.height = h;
+          restoreDataUrlToCanvas(notesCanvas, snapshot);
+        }
+      }
+    }
+
+    function restoreDataUrlToCanvas(canvas, dataUrl) {
+      if (!dataUrl || dataUrl === "data:,") return;
+      const img = new Image();
+      img.onload = () => {
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0);
+      };
+      img.src = dataUrl;
+    }
+
+    function setOverlaySketchActive(enable) {
+      overlaySketchEnabled = enable;
+      const ribbon = document.getElementById("sketchToolbarRibbon");
+      const btn = document.getElementById("btnToggleOverlaySketch");
+      const btnText = document.getElementById("overlaySketchBtnText");
+      const projCanvas = document.getElementById("projectorSketchCanvas");
+      const notesCanvas = document.getElementById("notesOverlayCanvas");
+      const projDrawBtn = document.getElementById("btnProjectorDrawToggle");
+
+      resizeAllSketchCanvases();
+
+      if (enable) {
+        ribbon.classList.remove("hidden");
+        btnText.textContent = "Draw on Screen: ON";
+        btn.className = "px-3 py-1.5 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-extrabold shadow-md flex items-center gap-1.5 transition";
+        projCanvas.classList.remove("hidden", "pointer-events-none");
+        projCanvas.classList.add("sketch-cursor-active");
+        notesCanvas.classList.remove("hidden", "pointer-events-none");
+        notesCanvas.classList.add("sketch-cursor-active");
+        if (projDrawBtn) projDrawBtn.innerHTML = `<span class="inline-flex items-center gap-1.5">${svgs.pencil} Stop Drawing on File</span>`;
+        showToast("Cursor Paint & Sketch Mode ON — Draw directly over the projected file or notes!");
+      } else {
+        if (currentWorkspaceMode !== "whiteboard") {
+          ribbon.classList.add("hidden");
+        }
+        btnText.textContent = "Draw on Screen: OFF";
+        btn.className = "px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-extrabold shadow-sm flex items-center gap-1.5 transition";
+        projCanvas.classList.add("pointer-events-none");
+        projCanvas.classList.remove("sketch-cursor-active");
+        notesCanvas.classList.add("pointer-events-none");
+        notesCanvas.classList.remove("sketch-cursor-active");
+        if (projDrawBtn) projDrawBtn.innerHTML = `<span>Draw / Mark on File</span>`;
+        showToast("Cursor Sketch Mode paused — markings remain visible on screen.");
+      }
+    }
+
+    document.getElementById("btnToggleOverlaySketch").addEventListener("click", () => {
+      setOverlaySketchActive(!overlaySketchEnabled);
+    });
+
+    document.getElementById("btnProjectorDrawToggle").addEventListener("click", () => {
+      setOverlaySketchActive(!overlaySketchEnabled);
+    });
+
+    // Attach Freehand & Shape Drawing Listeners to All 3 Sketch Canvases
+    function attachInteractiveSketching(canvasId) {
+      const canvas = document.getElementById(canvasId);
+      if (!canvas) return;
+      const ctx = canvas.getContext("2d");
+
+      let drawing = false;
+      let startX = 0;
+      let startY = 0;
+      let snapshotImageData = null;
+
+      function getCoords(e) {
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = canvas.width / rect.width;
+        const scaleY = canvas.height / rect.height;
+        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+        const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+        return {
+          x: (clientX - rect.left) * scaleX,
+          y: (clientY - rect.top) * scaleY
+        };
+      }
+
+      function startStroke(e) {
+        if (canvasId !== "whiteboardCanvas" && !overlaySketchEnabled) return;
+        e.preventDefault();
+        lastActiveCanvasId = canvasId;
+        drawing = true;
+        const pt = getCoords(e);
+        startX = pt.x;
+        startY = pt.y;
+
+        // Save undo snapshot
+        const hist = canvasHistories[canvasId];
+        hist.push(canvas.toDataURL());
+        if (hist.length > 25) hist.shift();
+
+        snapshotImageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+
+        ctx.beginPath();
+        ctx.moveTo(startX, startY);
+      }
+
+      function moveStroke(e) {
+        if (!drawing) return;
+        e.preventDefault();
+        const pt = getCoords(e);
+
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+
+        if (currentSketchTool === "pen") {
+          ctx.globalCompositeOperation = "source-over";
+          ctx.globalAlpha = 1.0;
+          ctx.strokeStyle = currentSketchColor;
+          ctx.lineWidth = currentSketchSize;
+          ctx.lineTo(pt.x, pt.y);
+          ctx.stroke();
+        } else if (currentSketchTool === "marker") {
+          ctx.globalCompositeOperation = "source-over";
+          ctx.globalAlpha = 0.32;
+          ctx.strokeStyle = currentSketchColor;
+          ctx.lineWidth = Math.max(14, currentSketchSize * 3);
+          ctx.lineTo(pt.x, pt.y);
+          ctx.stroke();
+        } else if (currentSketchTool === "eraser") {
+          if (canvasId === "whiteboardCanvas") {
+            ctx.globalCompositeOperation = "source-over";
+            ctx.globalAlpha = 1.0;
+            ctx.strokeStyle = "#ffffff";
+            ctx.lineWidth = Math.max(16, currentSketchSize * 4);
+            ctx.lineTo(pt.x, pt.y);
+            ctx.stroke();
+          } else {
+            ctx.globalCompositeOperation = "destination-out";
+            ctx.lineWidth = Math.max(18, currentSketchSize * 4);
+            ctx.lineTo(pt.x, pt.y);
+            ctx.stroke();
+          }
+        } else {
+          // Shape preview: restore snapshot first
+          ctx.putImageData(snapshotImageData, 0, 0);
+          ctx.globalCompositeOperation = "source-over";
+          ctx.globalAlpha = 1.0;
+          ctx.strokeStyle = currentSketchColor;
+          ctx.lineWidth = currentSketchSize;
+
+          if (currentSketchTool === "line") {
+            ctx.beginPath();
+            ctx.moveTo(startX, startY);
+            ctx.lineTo(pt.x, pt.y);
+            ctx.stroke();
+          } else if (currentSketchTool === "arrow") {
+            const headLen = Math.max(12, currentSketchSize * 3);
+            const angle = Math.atan2(pt.y - startY, pt.x - startX);
+            ctx.beginPath();
+            ctx.moveTo(startX, startY);
+            ctx.lineTo(pt.x, pt.y);
+            ctx.lineTo(pt.x - headLen * Math.cos(angle - Math.PI / 6), pt.y - headLen * Math.sin(angle - Math.PI / 6));
+            ctx.moveTo(pt.x, pt.y);
+            ctx.lineTo(pt.x - headLen * Math.cos(angle + Math.PI / 6), pt.y - headLen * Math.sin(angle + Math.PI / 6));
+            ctx.stroke();
+          } else if (currentSketchTool === "rect") {
+            ctx.strokeRect(startX, startY, pt.x - startX, pt.y - startY);
+          } else if (currentSketchTool === "circle") {
+            const rx = Math.abs(pt.x - startX) / 2;
+            const ry = Math.abs(pt.y - startY) / 2;
+            const cx = Math.min(startX, pt.x) + rx;
+            const cy = Math.min(startY, pt.y) + ry;
+            ctx.beginPath();
+            ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+            ctx.stroke();
+          }
+        }
+      }
+
+      function endStroke() {
+        if (!drawing) return;
+        drawing = false;
+        ctx.globalCompositeOperation = "source-over";
+        ctx.globalAlpha = 1.0;
+
+        if (collabChannel && connectionState === "Connected") {
+          try {
+            collabChannel.postMessage({
+              type: "SKETCH_SYNC",
+              roomId: currentRoomId,
+              targetCanvasId: canvasId,
+              dataUrl: canvas.toDataURL()
+            });
+          } catch {}
+        }
+      }
+
+      canvas.addEventListener("mousedown", startStroke);
+      canvas.addEventListener("mousemove", moveStroke);
+      window.addEventListener("mouseup", endStroke);
+
+      canvas.addEventListener("touchstart", startStroke, { passive: false });
+      canvas.addEventListener("touchmove", moveStroke, { passive: false });
+      window.addEventListener("touchend", endStroke);
+    }
+
+    attachInteractiveSketching("projectorSketchCanvas");
+    attachInteractiveSketching("notesOverlayCanvas");
+    attachInteractiveSketching("whiteboardCanvas");
+
+    // Sketch Tool Buttons
+    document.querySelectorAll("[data-sketch-tool]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        currentSketchTool = btn.getAttribute("data-sketch-tool");
+        document.querySelectorAll(".sketch-tool-btn").forEach(b => {
+          b.className = "sketch-tool-btn px-2.5 py-1 rounded-lg font-semibold";
+        });
+        btn.className = "sketch-tool-btn px-2.5 py-1 rounded-lg font-semibold bg-blue-600 text-white";
+      });
+    });
+
+    // Sketch Color Buttons
+    document.querySelectorAll("[data-sketch-color]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        currentSketchColor = btn.getAttribute("data-sketch-color");
+        document.getElementById("sketchColorPicker").value = currentSketchColor;
+        if (currentSketchTool === "eraser") {
+          currentSketchTool = "pen";
+        }
+      });
+    });
+
+    document.getElementById("sketchColorPicker").addEventListener("input", (e) => {
+      currentSketchColor = e.target.value;
+    });
+
+    document.getElementById("sketchSizeRange").addEventListener("input", (e) => {
+      currentSketchSize = parseInt(e.target.value, 10) || 4;
+      document.getElementById("sketchSizeLabel").textContent = currentSketchSize + "px";
+    });
+
+    document.getElementById("btnSketchUndo").addEventListener("click", () => {
+      const c = document.getElementById(lastActiveCanvasId);
+      const hist = canvasHistories[lastActiveCanvasId];
+      if (!c || !hist || hist.length === 0) {
+        showToast("Nothing to undo on current sketch canvas.");
+        return;
+      }
+      const prevUrl = hist.pop();
+      const ctx = c.getContext("2d");
+      ctx.clearRect(0, 0, c.width, c.height);
+      restoreDataUrlToCanvas(c, prevUrl);
+    });
+
+    document.getElementById("btnSketchClear").addEventListener("click", () => {
+      [
+        document.getElementById("projectorSketchCanvas"),
+        document.getElementById("notesOverlayCanvas"),
+        document.getElementById("whiteboardCanvas")
+      ].forEach(c => {
+        if (c) {
+          const ctx = c.getContext("2d");
+          ctx.clearRect(0, 0, c.width, c.height);
+        }
+      });
+      showToast("Cleared all sketch markings.");
+    });
+
+    document.getElementById("btnInsertSketchIntoNotes").addEventListener("click", () => {
+      const c = document.getElementById(lastActiveCanvasId) || document.getElementById("whiteboardCanvas");
+      if (!c) return;
+      const dataUrl = c.toDataURL("image/png");
+      richTextEditor.insertAdjacentHTML(
+        "beforeend",
+        `<figure class="my-4 p-3 rounded-xl border border-slate-200 bg-white"><img src="${dataUrl}" alt="Embedded Sketch" class="max-w-full h-auto mx-auto"/><figcaption class="text-center text-xs text-slate-500 mt-1"> Sketch / Diagram created by ${currentUser.fullName}</figcaption></figure>`
+      );
+      persistCurrentDocAndBroadcast();
+      showToast("Embedded your sketch directly into the Notes Document!");
+    });
+
+    document.getElementById("btnDownloadSketchPng").addEventListener("click", () => {
+      const c = document.getElementById(lastActiveCanvasId) || document.getElementById("whiteboardCanvas");
+      if (!c) return;
+      c.toBlob((blob) => {
+        if (blob) triggerDownload(blob, `${(editorDocTitle.value || "CollabSpace").replace(/\s+/g, "_")}_Sketch.png`);
+      });
+      showToast("Downloaded sketch as PNG!");
+    });
+
+    document.getElementById("btnWhiteboardGridToggle").addEventListener("click", () => {
+      whiteboardShowGrid = !whiteboardShowGrid;
+      const wb = document.getElementById("whiteboardContainer");
+      wb.style.backgroundImage = whiteboardShowGrid
+        ? "radial-gradient(#cbd5e1 1.25px, transparent 1.25px)"
+        : "none";
+      wb.style.backgroundSize = "20px 20px";
+    });
+
+    // =========================================================================
+    // 10. RICH-TEXT TOOLBAR, ANNOTATIONS, COLLABORATORS & EXPORT
+    // =========================================================================
+    document.querySelectorAll("[data-cmd]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const cmd = btn.getAttribute("data-cmd");
+        richTextEditor.focus();
+        document.execCommand(cmd, false, null);
+        persistCurrentDocAndBroadcast();
+      });
+    });
+
+    document.getElementById("toolbarBlockFormat").addEventListener("change", (e) => {
+      richTextEditor.focus();
+      document.execCommand("formatBlock", false, e.target.value);
+      persistCurrentDocAndBroadcast();
+    });
+
+    document.getElementById("toolbarFontFamily").addEventListener("change", (e) => {
+      richTextEditor.focus();
+      document.execCommand("fontName", false, e.target.value);
+      persistCurrentDocAndBroadcast();
+    });
+
+    document.getElementById("toolbarFontSize").addEventListener("change", (e) => {
+      richTextEditor.focus();
+      document.execCommand("fontSize", false, e.target.value);
+      persistCurrentDocAndBroadcast();
+    });
+
+    document.querySelectorAll("[data-forecolor]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        richTextEditor.focus();
+        document.execCommand("foreColor", false, btn.getAttribute("data-forecolor"));
+        persistCurrentDocAndBroadcast();
+      });
+    });
+
+    document.getElementById("customForeColor").addEventListener("input", (e) => {
+      richTextEditor.focus();
+      document.execCommand("foreColor", false, e.target.value);
+      persistCurrentDocAndBroadcast();
+    });
+
+    document.querySelectorAll("[data-hilite]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        richTextEditor.focus();
+        document.execCommand("hiliteColor", false, btn.getAttribute("data-hilite"));
+        persistCurrentDocAndBroadcast();
+      });
+    });
+
+    // Link & Image Modal
+    const modalInsertMedia = document.getElementById("modalInsertMedia");
+    document.getElementById("btnInsertLink").addEventListener("click", () => {
+      mediaModalMode = "link";
+      document.getElementById("mediaModalTitle").textContent = "Insert Hyperlink";
+      document.getElementById("mediaUrlLabel").textContent = "Link Destination URL";
+      document.getElementById("mediaImageUploadRow").classList.add("hidden");
+      modalInsertMedia.classList.remove("hidden");
+    });
+
+    document.getElementById("btnInsertImage").addEventListener("click", () => {
+      mediaModalMode = "image";
+      document.getElementById("mediaModalTitle").textContent = "Insert Image";
+      document.getElementById("mediaUrlLabel").textContent = "Image URL";
+      document.getElementById("mediaImageUploadRow").classList.remove("hidden");
+      modalInsertMedia.classList.remove("hidden");
+    });
+
+    document.getElementById("btnCloseMediaModal").addEventListener("click", () => modalInsertMedia.classList.add("hidden"));
+    document.getElementById("btnCancelMedia").addEventListener("click", () => modalInsertMedia.classList.add("hidden"));
+
+    document.getElementById("formInsertMedia").addEventListener("submit", (e) => {
+      e.preventDefault();
+      const url = document.getElementById("mediaUrlInput").value.trim();
+      if (!url) return;
+      modalInsertMedia.classList.add("hidden");
+      richTextEditor.focus();
+      if (mediaModalMode === "link") {
+        document.execCommand("createLink", false, url);
+      } else {
+        document.execCommand("insertImage", false, url);
+      }
+      document.getElementById("formInsertMedia").reset();
+      persistCurrentDocAndBroadcast();
+    });
+
+    document.getElementById("mediaImageFileInput").addEventListener("change", (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        modalInsertMedia.classList.add("hidden");
+        richTextEditor.focus();
+        document.execCommand("insertImage", false, reader.result);
+        persistCurrentDocAndBroadcast();
+      };
+      reader.readAsDataURL(file);
+    });
+
+    function renderCollaboratorsList(users) {
+      const avatarBar = document.getElementById("collaboratorAvatars");
+      const sidebarList = document.getElementById("sidebarCollaboratorList");
+      document.getElementById("sidebarCollabCount").textContent = `${users.length} Online`;
+
+      avatarBar.innerHTML = users.map(u => `
+        <div class="w-7 h-7 rounded-full text-white text-xs font-bold flex items-center justify-center ring-2 ring-white" style="background:${u.color}" title="${u.name}">
+          ${u.name.charAt(0).toUpperCase()}
+        </div>
+      `).join("");
+
+      sidebarList.innerHTML = users.map(u => `
+        <div class="flex items-center justify-between p-2 rounded-xl theme-subtle border theme-border">
+          <div class="flex items-center gap-2">
+            <span class="w-2.5 h-2.5 rounded-full" style="background:${u.color}"></span>
+            <span class="font-semibold">${u.name}</span>
+          </div>
+          <span class="text-[10px] font-mono theme-muted">${u.role}</span>
+        </div>
+      `).join("");
+    }
+
+    document.getElementById("btnSimulateCoEditor").addEventListener("click", () => {
+      const label = document.getElementById("coEditorBtnLabel");
+      if (coEditorInterval) {
+        clearInterval(coEditorInterval);
+        coEditorInterval = null;
+        label.textContent = "Simulate Live Teammate";
+        renderCollaboratorsList([{ name: currentUser.fullName + " (You)", color: "#2563eb", role: "Host" }]);
+        showToast("Teammate simulation stopped.");
+        return;
+      }
+
+      label.textContent = "Stop Teammate Sim";
+      renderCollaboratorsList([
+        { name: currentUser.fullName + " (You)", color: "#2563eb", role: "Host" },
+        { name: "Maya Lin (Teammate)", color: "#10b981", role: "Collaborator" }
+      ]);
+      showToast("Maya Lin joined the room and is taking notes live!");
+
+      const snippets = [
+        `<p><span style="background-color: #bbf7d0;"><strong>[Maya Lin — Live Note]:</strong> Key takeaway from the projected slide: Yjs CRDT merges state vectors without central locks.</span></p>`,
+        `<p><em>[Maya Lin]:</em> Added summary point — we can also mark up the projected PDF using the red pen tool.</p>`
+      ];
+      let step = 0;
+      coEditorInterval = setInterval(() => {
+        if (step >= snippets.length) {
+          clearInterval(coEditorInterval);
+          coEditorInterval = null;
+          label.textContent = "Simulate Live Teammate";
+          return;
+        }
+        richTextEditor.insertAdjacentHTML("beforeend", snippets[step++]);
+        document.getElementById("remoteCursorIndicator").textContent = "Maya Lin added a collaborative note";
+        persistCurrentDocAndBroadcast();
+      }, 2200);
+    });
+
+    function renderAnnotations() {
+      const docs = getDocsDB();
+      const doc = docs[currentRoomId];
+      const list = doc?.annotations || [];
+      document.getElementById("annotationCountBadge").textContent = String(list.length);
+      const container = document.getElementById("annotationsList");
+      if (list.length === 0) {
+        container.innerHTML = `<div class="text-slate-400 italic">No teaching notes yet.</div>`;
+        return;
+      }
+      container.innerHTML = list.map((a, i) => `
+        <div class="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-950 space-y-1">
+          <div class="flex items-center justify-between text-[10px] font-bold text-amber-700">
+            <span>${a.author}</span>
+            <button type="button" data-del-note="${i}" class="hover:text-red-600">✕</button>
+          </div>
+          <div class="text-xs">${a.text}</div>
+        </div>
+      `).join("");
+
+      container.querySelectorAll("[data-del-note]").forEach(btn => {
+        btn.addEventListener("click", () => {
+          const idx = parseInt(btn.getAttribute("data-del-note"), 10);
+          docs[currentRoomId].annotations.splice(idx, 1);
+          saveDocsDB(docs);
+          renderAnnotations();
+        });
+      });
+    }
+
+    document.getElementById("btnAddAnnotation").addEventListener("click", () => {
+      const inp = document.getElementById("inputAnnotationNote");
+      const val = inp.value.trim();
+      if (!val || !currentRoomId) return;
+      const docs = getDocsDB();
+      if (!docs[currentRoomId].annotations) docs[currentRoomId].annotations = [];
+      docs[currentRoomId].annotations.push({
+        author: currentUser.fullName,
+        text: val,
+        createdAt: new Date().toISOString()
+      });
+      saveDocsDB(docs);
+      inp.value = "";
+      renderAnnotations();
+      showToast("Added teaching margin note.");
+    });
+
+    // Connection State Cycle
+    document.getElementById("btnCycleConnection").addEventListener("click", () => {
+      const states = ["Connected", "Reconnecting", "Offline"];
+      connectionState = states[(states.indexOf(connectionState) + 1) % states.length];
+      const btn = document.getElementById("btnCycleConnection");
+      const dot = document.getElementById("connStatusDot");
+      const lbl = document.getElementById("connStatusLabel");
+      lbl.textContent = connectionState;
+
+      if (connectionState === "Connected") {
+        btn.className = "px-2.5 py-1 rounded-full text-xs font-semibold border flex items-center gap-1.5 bg-emerald-50 text-emerald-700 border-emerald-200";
+        dot.className = "w-2 h-2 rounded-full bg-emerald-500";
+        persistCurrentDocAndBroadcast();
+      } else if (connectionState === "Reconnecting") {
+        btn.className = "px-2.5 py-1 rounded-full text-xs font-semibold border flex items-center gap-1.5 bg-amber-50 text-amber-700 border-amber-200";
+        dot.className = "w-2 h-2 rounded-full bg-amber-500 animate-ping";
+      } else {
+        btn.className = "px-2.5 py-1 rounded-full text-xs font-semibold border flex items-center gap-1.5 bg-red-50 text-red-700 border-red-200";
+        dot.className = "w-2 h-2 rounded-full bg-red-500";
+      }
+    });
+
+    // Export Dropdown
+    const exportMenu = document.getElementById("exportDropdownMenu");
+    document.getElementById("btnToggleExportMenu").addEventListener("click", (e) => {
+      e.stopPropagation();
+      exportMenu.classList.toggle("hidden");
+    });
+    document.addEventListener("click", () => exportMenu.classList.add("hidden"));
+
+    function htmlToMarkdown(html) {
+      const temp = document.createElement("div");
+      temp.innerHTML = html;
+      return temp.innerHTML
+        .replace(/<h1[^>]*>(.*?)<\/h1>/gi, "# $1\n\n")
+        .replace(/<h2[^>]*>(.*?)<\/h2>/gi, "## $1\n\n")
+        .replace(/<h3[^>]*>(.*?)<\/h3>/gi, "### $1\n\n")
+        .replace(/<strong[^>]*>(.*?)<\/strong>/gi, "**$1**")
+        .replace(/<b[^>]*>(.*?)<\/b>/gi, "**$1**")
+        .replace(/<em[^>]*>(.*?)<\/em>/gi, "*$1*")
+        .replace(/<i[^>]*>(.*?)<\/i>/gi, "*$1*")
+        .replace(/<li[^>]*>(.*?)<\/li>/gi, "- $1\n")
+        .replace(/<\/p>/gi, "\n\n")
+        .replace(/<br\s*\/?>/gi, "\n")
+        .replace(/<[^>]+>/g, "")
+        .trim();
+    }
+
+    function buildMinimalPdfBlob(title, plainText, annotations) {
+      const lines = [title, "========================================", ...plainText.split(/\r?\n/)];
+      if (annotations && annotations.length > 0) {
+        lines.push("", "--- Teaching & Margin Notes ---");
+        annotations.forEach(a => lines.push(`[${a.author}]: ${a.text}`));
+      }
+      const sanitizePdfText = (s) => s.replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)").replace(/[^\x20-\x7E]/g, " ");
+      let y = 750;
+      const ops = ["BT", "/F1 11 Tf"];
+      lines.slice(0, 55).forEach((line) => {
+        const wrapped = line.match(/.{1,80}/g) || [""];
+        wrapped.forEach(w => {
+          if (y > 50) {
+            ops.push(`1 0 0 1 50 ${y} Tm (${sanitizePdfText(w)}) Tj`);
+            y -= 15;
+          }
+        });
+      });
+      ops.push("ET");
+      const streamContent = ops.join("\n");
+
+      const objects = [
+        "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
+        "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
+        "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>\nendobj\n",
+        `4 0 obj\n<< /Length ${streamContent.length} >>\nstream\n${streamContent}\nendstream\nendobj\n`,
+        "5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n"
+      ];
+
+      let pdf = "%PDF-1.4\n";
+      const offsets = [];
+      objects.forEach(obj => {
+        offsets.push(pdf.length);
+        pdf += obj;
+      });
+      const xrefStart = pdf.length;
+      pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+      offsets.forEach(off => {
+        pdf += String(off).padStart(10, "0") + " 00000 n \n";
+      });
+      pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF`;
+      return new Blob([pdf], { type: "application/pdf" });
+    }
+
+    function triggerDownload(blob, filename) {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    document.querySelectorAll("[data-export-fmt]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const fmt = btn.getAttribute("data-export-fmt");
+        const rawTitle = (editorDocTitle.value || "CollabSpace_Document").trim();
+        const safeBase = rawTitle.replace(/[^a-zA-Z0-9_-]+/g, "_");
+        const htmlContent = richTextEditor.innerHTML;
+        const plainText = richTextEditor.innerText || "";
+        const docs = getDocsDB();
+        const annotations = docs[currentRoomId]?.annotations || [];
+
+        if (fmt === "txt") {
+          triggerDownload(new Blob([plainText], { type: "text/plain;charset=utf-8" }), `${safeBase}.txt`);
+        } else if (fmt === "md") {
+          triggerDownload(new Blob([htmlToMarkdown(htmlContent)], { type: "text/markdown;charset=utf-8" }), `${safeBase}.md`);
+        } else if (fmt === "html") {
+          const fullHtml = "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>" + rawTitle + "</title><style>body{font-family:Inter,sans-serif;max-width:800px;margin:40px auto;line-height:1.7;color:#0f172a;}</style></head><body>" + htmlContent + "<" + "/body><" + "/html>";
+          triggerDownload(new Blob([fullHtml], { type: "text/html;charset=utf-8" }), `${safeBase}.html`);
+        } else if (fmt === "docx") {
+          const wordDoc = `<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'><head><meta charset='utf-8'><title>${rawTitle}</title></head><body>${htmlContent}</body></html>`;
+          triggerDownload(new Blob(["\ufeff", wordDoc], { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" }), `${safeBase}.docx`);
+        } else if (fmt === "pdf") {
+          triggerDownload(buildMinimalPdfBlob(rawTitle, plainText, annotations), `${safeBase}.pdf`);
+        }
+
+        showToast(`Downloaded ${safeBase}.${fmt}`);
+      });
+    });
+
+    document.getElementById("btnBackToDashboard").addEventListener("click", () => navigateTo("dashboard"));
+    document.getElementById("btnLeaveRoom").addEventListener("click", () => {
+      if (coEditorInterval) { clearInterval(coEditorInterval); coEditorInterval = null; }
+      navigateTo("dashboard");
+    });
+
+    document.getElementById("btnCopyRoomInvite").addEventListener("click", () => {
+      if (currentRoomId) copyToClipboard(getInviteUrl(currentRoomId), `Copied invitation link for ${currentRoomId}`);
+    });
+    document.getElementById("btnSidebarCopyInvite").addEventListener("click", () => {
+      if (currentRoomId) copyToClipboard(getInviteUrl(currentRoomId), `Copied invitation link for ${currentRoomId}`);
+    });
+
+    const modalRepoExplorer = document.getElementById("modalRepoExplorer");
+    document.getElementById("btnOpenRepoModal").addEventListener("click", () => modalRepoExplorer.classList.remove("hidden"));
+    document.getElementById("btnCloseRepoModal").addEventListener("click", () => modalRepoExplorer.classList.add("hidden"));
+
+    // =========================================================================
+    // 11. INITIAL BOOTSTRAP
+    // =========================================================================
+    (async function initCollabSpace() {
+      const users = getUsersDB();
+      if (users.length === 0) {
+        const defaultHash = await hashPassword("CollabSpace123", "demo@collabspace.io");
+        users.push({
+          id: "usr_demo_1",
+          fullName: "Alex Rivera",
+          email: "demo@collabspace.io",
+          username: "alex",
+          passwordHash: defaultHash,
+          createdAt: new Date().toISOString()
+        });
+        saveUsersDB(users);
+      }
+
+      if (currentUser) {
+        const rooms = getRoomsDB();
+        const roomIds = Object.keys(rooms);
+        if (roomIds.length > 0) {
+          openRoomInEditor(roomIds[0]);
+        } else {
+          navigateTo("dashboard");
+        }
+      } else {
+        navigateTo("auth");
+      }
+    })();
+  </script>
+
+  <!-- Initialize Background CrystalizedBall -->
+  <script type="module">
+    import { initCrystalizedBall } from './src/crystalizedBallVanilla.js';
+
+    window.addEventListener('DOMContentLoaded', () => {
+      const bgContainer = document.getElementById('crystalizedBallBackground');
+      if (bgContainer) {
+        const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+        const ball = initCrystalizedBall(bgContainer, {
+          preset: 'plasma',
+          theme: isDark ? 'dark' : 'light',
+          size: 1.15,
+          crackle: 0.85,
+          fill: 0.55,
+          glow: 1.25,
+          flares: 0.75,
+          interactive: true,
+          hoverStrength: 0.85,
+          speed: 1.05,
+          dustSpeed: 1.15
+        });
+
+        document.querySelectorAll('.ball-preset-btn').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const preset = btn.getAttribute('data-ball-preset');
+            ball?.setPreset(preset);
+            document.querySelectorAll('.ball-preset-btn').forEach(b => {
+              b.classList.remove('btn-accent', 'shadow-sm');
+              b.classList.add('theme-subtle', 'theme-muted');
+            });
+            btn.classList.add('btn-accent', 'shadow-sm');
+            btn.classList.remove('theme-subtle', 'theme-muted');
+          });
+        });
+
+        const observer = new MutationObserver(() => {
+          const darkNow = document.documentElement.getAttribute('data-theme') === 'dark';
+          ball?.setTheme(darkNow ? 'dark' : 'light');
+        });
+        observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+      }
+    });
+  </script>
+</body>
+</html>
