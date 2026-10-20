@@ -661,6 +661,9 @@
           <div class="flex items-center gap-2 text-[11px] theme-muted px-1">
             <span>Room: <strong id="editorRoomIdDisplay" class="font-mono">CS-100000</strong></span>
             <span>•</span>
+            <span class="inline-flex items-center gap-1">User: <strong id="editorCurrentUserDisplay" class="text-blue-500 font-bold">User</strong></span>
+            <button id="btnEditorSwitchAccount" type="button" title="Switch Account" class="text-[10px] text-indigo-500 hover:underline">(switch)</button>
+            <span>•</span>
             <span id="editorSaveStatus" class="text-emerald-600 font-medium">✓ Saved &amp; Synced</span>
           </div>
         </div>
@@ -1208,6 +1211,12 @@
           if (key === "cs_active_user" || key === "collabspace_token") {
             const sess = sessionStorage.getItem(key);
             if (sess) return JSON.parse(sess);
+            const raw = localStorage.getItem(key);
+            if (raw) {
+              sessionStorage.setItem(key, raw);
+              return JSON.parse(raw);
+            }
+            return fallback;
           }
           const raw = localStorage.getItem(key);
           return raw ? JSON.parse(raw) : fallback;
@@ -1947,6 +1956,7 @@
           if (Array.isArray(data.participants)) {
             renderCollaboratorsList(data.participants.map(p => ({
               userId: p.userId,
+              username: p.username,
               name: p.fullName,
               color: p.color || "#2563eb",
               role: p.role || "Collaborator"
@@ -2076,6 +2086,10 @@
       crdtVersion = doc.crdtVersion || 1;
       editorDocTitle.value = doc.title || room.name;
       document.getElementById("editorRoomIdDisplay").textContent = cleanRoomId;
+      const userDisplay = document.getElementById("editorCurrentUserDisplay");
+      if (userDisplay) {
+        userDisplay.textContent = currentUser ? currentUser.fullName : "Guest";
+      }
 
       const isOwner = room.ownerId === currentUser.id;
       const isReadOnly = !isOwner && room.access === "readonly";
@@ -3028,6 +3042,22 @@
       reader.readAsDataURL(file);
     });
 
+    function isPersonCurrentUser(person) {
+      if (!person || !currentUser) return false;
+      const curId = currentUser.id || currentUser.userId || currentUser._id;
+      const curUsername = (currentUser.username || "").trim().toLowerCase();
+      const curFullName = (currentUser.fullName || currentUser.name || "").replace(/\s*\(You\)\s*/gi, "").trim().toLowerCase();
+
+      const pId = person.userId || person.id || person._id;
+      const pUsername = (person.username || "").trim().toLowerCase();
+      const pFullName = (person.fullName || person.name || "").replace(/\s*\(You\)\s*/gi, "").trim().toLowerCase();
+
+      if (pId && curId && String(pId) === String(curId)) return true;
+      if (curUsername && pUsername && curUsername === pUsername) return true;
+      if (curFullName && pFullName && curFullName === pFullName && !["host", "collaborator", "user", "guest", "member"].includes(curFullName)) return true;
+      return false;
+    }
+
     function renderCollaboratorsList(users) {
       const avatarBar = document.getElementById("collaboratorAvatars");
       const hostContainer = document.getElementById("sidebarHostCard");
@@ -3048,19 +3078,6 @@
         hostUser = users[0];
       }
 
-      // Check if current viewer is the Host/Owner of this room
-      const roleBadge = document.getElementById("editorRoleBadge");
-      const isRoleBadgeHost = roleBadge && roleBadge.textContent && (
-        roleBadge.textContent.toLowerCase().includes("host") ||
-        roleBadge.textContent.toLowerCase().includes("owner")
-      );
-      const isRoomCreator = currentRoom && currentUser && (
-        currentRoom.ownerId === currentUser.id ||
-        (currentRoom.ownerName && currentUser.fullName && currentRoom.ownerName.trim().toLowerCase() === currentUser.fullName.trim().toLowerCase()) ||
-        (currentRoom.ownerName && currentRoom.ownerName.toLowerCase().includes("shankar"))
-      );
-      const isViewerHost = isRoleBadgeHost || isRoomCreator;
-
       // Collaborators list (everyone except host)
       const collaborators = users.filter(u => u !== hostUser);
 
@@ -3068,7 +3085,8 @@
       if (hostContainer) {
         if (hostUser) {
           const rawName = (hostUser.name || hostUser.fullName || "Host").replace(/\s*\(You\)\s*/gi, "").trim();
-          const displayName = isViewerHost ? `${rawName} (You)` : rawName;
+          const isHostMe = isPersonCurrentUser(hostUser);
+          const displayName = isHostMe ? `${rawName} (You)` : rawName;
           const initial = rawName.charAt(0).toUpperCase() || "H";
           hostContainer.innerHTML = `
             <div class="p-2.5 rounded-xl theme-subtle border theme-border flex items-center justify-between">
@@ -3127,12 +3145,8 @@
         } else {
           collabContainer.innerHTML = collaborators.map(u => {
             const rawName = (u.name || u.fullName || "Collaborator").replace(/\s*\(You\)\s*/gi, "").trim();
-            // A collaborator can ONLY be labeled (You) if the viewer is NOT the host, AND this collaborator matches the viewer
-            const isThisCollaboratorYou = !isViewerHost && (
-              (u.userId && currentUser?.id && u.userId === currentUser.id) ||
-              (currentUser?.fullName && rawName.toLowerCase() === currentUser.fullName.trim().toLowerCase())
-            );
-            const displayName = isThisCollaboratorYou ? `${rawName} (You)` : rawName;
+            const isCollabMe = isPersonCurrentUser(u);
+            const displayName = isCollabMe ? `${rawName} (You)` : rawName;
             const initial = rawName.charAt(0).toUpperCase() || "C";
             return `
               <div class="flex items-center justify-between p-2 rounded-xl theme-subtle border theme-border">
@@ -3373,6 +3387,20 @@
       if (coEditorInterval) { clearInterval(coEditorInterval); coEditorInterval = null; }
       navigateTo("dashboard");
     });
+
+    const btnSwitchAccount = document.getElementById("btnEditorSwitchAccount");
+    if (btnSwitchAccount) {
+      btnSwitchAccount.addEventListener("click", () => {
+        if (realtimeSocket && currentRoomId) {
+          realtimeSocket.emit("leave-room", { roomId: currentRoomId });
+        }
+        currentUser = null;
+        StorageService.remove("cs_active_user");
+        StorageService.remove("collabspace_token");
+        showToast("Logged out of editor session. Switch to another account.");
+        navigateTo("auth");
+      });
+    }
 
     document.getElementById("btnCopyRoomInvite").addEventListener("click", () => {
       if (currentRoomId) copyToClipboard(getInviteUrl(currentRoomId), `Copied invitation link for ${currentRoomId}`);

@@ -51,6 +51,20 @@ const EditorPage: React.FC = () => {
   const isRemoteUpdateRef = useRef(false);
   const providerRef = useRef<CollabCRDTProvider | null>(null);
 
+  const isPersonMe = (person: { userId?: string; fullName?: string; username?: string } | null | undefined) => {
+    if (!person || !user) return false;
+    const myId = user.id || (user as any).userId || (user as any)._id;
+    const pId = person.userId || (person as any).id;
+    if (myId && pId && String(myId) === String(pId)) return true;
+    const myUser = (user.username || '').trim().toLowerCase();
+    const pUser = (person.username || '').trim().toLowerCase();
+    if (myUser && pUser && myUser === pUser) return true;
+    const myName = (user.fullName || '').replace(/\s*\(You\)\s*/gi, '').trim().toLowerCase();
+    const pName = (person.fullName || '').replace(/\s*\(You\)\s*/gi, '').trim().toLowerCase();
+    if (myName && pName && myName === pName && !['host', 'collaborator', 'user', 'guest', 'member'].includes(myName)) return true;
+    return false;
+  };
+
   const editor = useEditor({
     extensions: [
       StarterKit,
@@ -270,7 +284,7 @@ const EditorPage: React.FC = () => {
                       if (!host) {
                         return <div className="text-xs text-slate-500 italic p-2 rounded-xl bg-slate-950/40 border border-slate-800">Connecting host...</div>;
                       }
-                      const isSelf = host.userId === user?.id;
+                      const isSelf = isPersonMe(host);
                       return (
                         <div className="flex items-center justify-between p-2 rounded-xl bg-slate-950/80 border border-amber-500/30">
                           <div className="flex items-center gap-2.5">
@@ -282,7 +296,7 @@ const EditorPage: React.FC = () => {
                             </div>
                             <div>
                               <div className="text-xs font-bold text-white flex items-center gap-1">
-                                <span>{host.fullName}</span>
+                                <span>{host.fullName.replace(/\s*\(You\)\s*/gi, '')}</span>
                                 {isSelf && <span className="text-slate-400 font-normal">(You)</span>}
                               </div>
                               <span className="text-[10px] text-emerald-400 font-mono flex items-center gap-1">
@@ -314,7 +328,6 @@ const EditorPage: React.FC = () => {
                     <div className="space-y-1.5">
                       {(() => {
                         const host = collaborators.find(c => c.role === 'Host') || collaborators[0];
-                        const isViewerHost = (host && host.userId === user?.id) || ((user as any)?.role === 'Host');
                         const members = collaborators.filter(c => c !== host);
                         if (members.length === 0) {
                           return (
@@ -324,7 +337,7 @@ const EditorPage: React.FC = () => {
                           );
                         }
                         return members.map((c) => {
-                          const isSelf = !isViewerHost && c.userId === user?.id;
+                          const isSelf = isPersonMe(c);
                           return (
                             <div
                               key={c.userId}
@@ -338,7 +351,7 @@ const EditorPage: React.FC = () => {
                                   {c.fullName.charAt(0).toUpperCase()}
                                 </div>
                                 <div className="text-xs font-semibold text-white flex items-center gap-1">
-                                  <span>{c.fullName}</span>
+                                  <span>{c.fullName.replace(/\s*\(You\)\s*/gi, '')}</span>
                                   {isSelf && <span className="text-slate-400 font-normal">(You)</span>}
                                 </div>
                               </div>
