@@ -1895,6 +1895,70 @@
       return { room: rooms[cleanRoomId], doc: docs[cleanRoomId] };
     }
 
+    async function syncRoomFromBackend(cleanRoomId) {
+      if (!cleanRoomId) return;
+      try {
+        const resp = await fetch(`${socketBaseUrl}/api/rooms/${cleanRoomId}`, {
+          headers: currentUser?.token ? { Authorization: `Bearer ${currentUser.token}` } : {}
+        });
+        if (resp.ok) {
+          const data = await resp.json();
+          if (data && data.room) {
+            const rooms = getRoomsDB();
+            const docs = getDocsDB();
+            let roomUpdated = false;
+            let docUpdated = false;
+
+            if (rooms[cleanRoomId]) {
+              if (data.room.name && rooms[cleanRoomId].name !== data.room.name) {
+                rooms[cleanRoomId].name = data.room.name;
+                roomUpdated = true;
+              }
+              if (data.room.ownerName && data.room.ownerName !== "Host" && rooms[cleanRoomId].ownerName !== data.room.ownerName) {
+                rooms[cleanRoomId].ownerName = data.room.ownerName;
+                roomUpdated = true;
+              }
+              if (data.room.ownerId) {
+                rooms[cleanRoomId].ownerId = data.room.ownerId;
+                roomUpdated = true;
+              }
+            }
+            if (data.document && docs[cleanRoomId]) {
+              if (data.document.title) {
+                docs[cleanRoomId].title = data.document.title;
+                docUpdated = true;
+              }
+              if (data.document.htmlContent && !data.document.htmlContent.includes("Connecting to shared workspace...")) {
+                docs[cleanRoomId].contentHtml = data.document.htmlContent;
+                docUpdated = true;
+              }
+            }
+
+            if (roomUpdated) saveRoomsDB(rooms);
+            if (docUpdated) saveDocsDB(docs);
+
+            if (currentRoomId === cleanRoomId) {
+              if (docs[cleanRoomId]?.title) editorDocTitle.value = docs[cleanRoomId].title;
+              if (docs[cleanRoomId]?.contentHtml && richTextEditor.innerHTML.includes("Connecting to shared workspace...")) {
+                suppressEditorBroadcast = true;
+                richTextEditor.innerHTML = docs[cleanRoomId].contentHtml;
+                suppressEditorBroadcast = false;
+                updateEditorCounters();
+              }
+              if (data.hostUser) {
+                renderCollaboratorsList([
+                  { userId: data.hostUser.userId, name: data.hostUser.fullName, color: data.hostUser.color || "#2563eb", role: "Host" },
+                  ...(currentUser && currentUser.id !== data.hostUser.userId ? [{ userId: currentUser.id, name: currentUser.fullName, color: "#10b981", role: "Collaborator" }] : [])
+                ]);
+              }
+            }
+          }
+        }
+      } catch (e) {
+        // Fallback gracefully to realtime socket
+      }
+    }
+
     document.getElementById("formJoinRoom").addEventListener("submit", (e) => {
       e.preventDefault();
       const raw = document.getElementById("inputJoinRoomId").value.trim();
@@ -1962,9 +2026,47 @@
     let collabChannel = null;
     let realtimeSocket = null;
     const injectedUrl = "%VITE_SOCKET_URL%";
-    const socketBaseUrl = (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")
+    let storedBackendUrl = localStorage.getItem("cs_backend_url");
+    const isLocalHost = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+    if (!isLocalHost && storedBackendUrl && (storedBackendUrl.includes("localhost") || storedBackendUrl.includes("127.0.0.1"))) {
+      localStorage.removeItem("cs_backend_url");
+      storedBackendUrl = null;
+    }
+    const socketBaseUrl = isLocalHost
       ? "http://localhost:5000"
-      : (localStorage.getItem("cs_backend_url") || (!injectedUrl.startsWith("%") ? injectedUrl : "") || "https://collabsapace-backend.onrender.com");
+      : (storedBackendUrl || (!injectedUrl.startsWith("%") ? injectedUrl : "") || "https://collabsapace-backend.onrender.com");
+
+    function sendSocketJoinRoom() {
+      if (!realtimeSocket || !currentRoomId || !currentUser) return;
+      const rooms = getRoomsDB();
+      const currentRoom = rooms[currentRoomId] || {};
+      const docs = getDocsDB();
+      const currentDoc = docs[currentRoomId] || {};
+      const isOwner = currentRoom.ownerId === currentUser.id;
+
+      const payload = {
+        roomId: currentRoomId,
+        roomTitle: currentDoc.title || currentRoom.name || ("Workspace " + currentRoomId),
+        contentHtml: currentDoc.contentHtml || richTextEditor.innerHTML,
+        user: {
+          ...currentUser,
+          role: isOwner ? "Host" : "Collaborator"
+        },
+        token: currentUser?.token
+      };
+
+      const doEmit = () => {
+        if (!realtimeSocket || !realtimeSocket.connected) return;
+        realtimeSocket.emit("join-room", payload);
+      };
+
+      if (realtimeSocket.connected) {
+        doEmit();
+      } else {
+        realtimeSocket.connect();
+        realtimeSocket.once("connect", doEmit);
+      }
+    }
 
     try {
       if (typeof io !== "undefined") {
@@ -1977,17 +2079,7 @@
         realtimeSocket.on("connect", () => {
           updateConnectionUI("Connected");
           if (currentRoomId && currentUser) {
-            const rooms = getRoomsDB();
-            const currentRoom = rooms[currentRoomId];
-            const isOwner = currentRoom && currentRoom.ownerId === currentUser.id;
-            realtimeSocket.emit("join-room", {
-              roomId: currentRoomId,
-              user: {
-                ...currentUser,
-                role: isOwner ? "Host" : "Collaborator"
-              },
-              token: currentUser?.token
-            });
+            sendSocketJoinRoom();
           }
         });
 
@@ -2008,14 +2100,49 @@
         // 1. Authoritative Deduplicated Participant List
         realtimeSocket.on("participants-update", (data) => {
           if (!data || data.roomId !== currentRoomId) return;
-          if (Array.isArray(data.participants)) {
-            renderCollaboratorsList(data.participants.map(p => ({
+          const pList = Array.isArray(data) ? data : (data.participants || []);
+          if (pList.length > 0) {
+            const mapped = pList.map(p => ({
               userId: p.userId,
               username: p.username,
-              name: p.fullName,
+              name: p.fullName || p.name,
               color: p.color || "#2563eb",
               role: p.role || "Collaborator"
-            })));
+            }));
+            renderCollaboratorsList(mapped);
+
+            const hostObj = mapped.find(m => m.role === "Host");
+            if (hostObj) {
+              const rooms = getRoomsDB();
+              if (rooms[currentRoomId] && rooms[currentRoomId].ownerName !== hostObj.name) {
+                rooms[currentRoomId].ownerName = hostObj.name;
+                rooms[currentRoomId].ownerId = hostObj.userId;
+                saveRoomsDB(rooms);
+              }
+            }
+          }
+        });
+
+        realtimeSocket.on("presence-update", (participants) => {
+          if (Array.isArray(participants) && currentRoomId) {
+            const mapped = participants.map(p => ({
+              userId: p.userId,
+              username: p.username,
+              name: p.fullName || p.name,
+              color: p.color || "#2563eb",
+              role: p.role || "Collaborator"
+            }));
+            renderCollaboratorsList(mapped);
+
+            const hostObj = mapped.find(m => m.role === "Host");
+            if (hostObj) {
+              const rooms = getRoomsDB();
+              if (rooms[currentRoomId] && rooms[currentRoomId].ownerName !== hostObj.name) {
+                rooms[currentRoomId].ownerName = hostObj.name;
+                rooms[currentRoomId].ownerId = hostObj.userId;
+                saveRoomsDB(rooms);
+              }
+            }
           }
         });
 
@@ -2029,9 +2156,26 @@
           if (data.title) {
             editorDocTitle.value = data.title;
           }
-          crdtVersion = data.crdtVersion || crdtVersion;
+          crdtVersion = Math.max(crdtVersion, data.crdtVersion || 1);
           suppressEditorBroadcast = false;
           updateEditorCounters();
+
+          const rooms = getRoomsDB();
+          if (rooms[currentRoomId]) {
+            if (data.hostUser) {
+              rooms[currentRoomId].ownerName = data.hostUser.fullName;
+              rooms[currentRoomId].ownerId = data.hostUser.userId;
+            }
+            if (data.title) rooms[currentRoomId].name = data.title;
+            saveRoomsDB(rooms);
+          }
+          const docs = getDocsDB();
+          if (docs[currentRoomId]) {
+            if (data.contentHtml) docs[currentRoomId].contentHtml = data.contentHtml;
+            if (data.title) docs[currentRoomId].title = data.title;
+            docs[currentRoomId].crdtVersion = crdtVersion;
+            saveDocsDB(docs);
+          }
 
           const roleBadge = document.getElementById("editorRoleBadge");
           if (roleBadge) {
@@ -2040,6 +2184,13 @@
             roleBadge.className = isOwner
               ? "text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-blue-100 text-blue-800"
               : "text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800";
+          }
+
+          if (data.hostUser && !data.isHost) {
+            renderCollaboratorsList([
+              { userId: data.hostUser.userId, name: data.hostUser.fullName, color: data.hostUser.color || "#2563eb", role: "Host" },
+              { userId: currentUser.id, name: currentUser.fullName, color: "#10b981", role: "Collaborator" }
+            ]);
           }
         });
 
@@ -2086,6 +2237,13 @@
 
         realtimeSocket.on("user-joined-notification", (data) => {
           showToast(`${data.fullName} joined the room (${data.role})`);
+        });
+
+        realtimeSocket.on("collaborator-joined", (data) => {
+          if (data && data.user) {
+            showToast(`${data.user.fullName || "Collaborator"} joined the room!`);
+            sendSocketJoinRoom();
+          }
         });
 
         realtimeSocket.on("collaborator-left", (data) => {
@@ -2184,21 +2342,28 @@
         ]);
       }
 
-      // Connect to Real-time Room over Socket.IO
-      const userPayload = {
-        ...currentUser,
-        role: isOwner ? "Host" : "Collaborator"
-      };
+      // Connect to Real-time Room over Socket.IO and sync from server
+      sendSocketJoinRoom();
+      syncRoomFromBackend(cleanRoomId);
 
-      if (realtimeSocket && realtimeSocket.connected) {
-        realtimeSocket.emit("join-room", {
-          roomId: currentRoomId,
-          user: userPayload,
-          token: currentUser?.token
-        });
-      } else if (realtimeSocket && !realtimeSocket.connected) {
-        updateConnectionUI("Reconnecting");
-        realtimeSocket.connect();
+      // If owner, prime server immediately with latest document title and content
+      if (isOwner && realtimeSocket) {
+        const primeDoc = () => {
+          if (!realtimeSocket.connected) return;
+          realtimeSocket.emit("doc-update", {
+            roomId: currentRoomId,
+            title: doc.title || room.name,
+            contentHtml: doc.contentHtml,
+            crdtVersion: crdtVersion || 1,
+            userName: currentUser.fullName,
+            user: { ...currentUser, role: "Host" }
+          });
+        };
+        if (realtimeSocket.connected) {
+          primeDoc();
+        } else {
+          realtimeSocket.once("connect", primeDoc);
+        }
       }
 
       renderAnnotations();

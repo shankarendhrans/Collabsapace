@@ -28,6 +28,7 @@ export interface PublicParticipant {
 const roomYDocs = new Map<string, Y.Doc>();
 const roomDocs = new Map<string, { title: string; htmlContent: string }>();
 const roomParticipants = new Map<string, Map<string, Participant>>();
+const roomOwners = new Map<string, { userId: string; fullName: string; username: string; color: string }>();
 const roomVersions = new Map<string, number>();
 const saveTimeouts = new Map<string, NodeJS.Timeout>();
 
@@ -53,24 +54,38 @@ function getUserColor(userId: string): string {
 
 function getDeduplicatedParticipants(roomId: string): PublicParticipant[] {
   const socketMap = roomParticipants.get(roomId);
-  if (!socketMap) return [];
+  const uniqueByUser = new Map<string, PublicParticipant>();
 
-  const uniqueByUser = new Map<string, Participant>();
-  for (const participant of socketMap.values()) {
-    const existing = uniqueByUser.get(participant.userId);
-    if (!existing || participant.role === "Host" || participant.joinedAt < existing.joinedAt) {
-      uniqueByUser.set(participant.userId, participant);
+  if (socketMap) {
+    for (const participant of socketMap.values()) {
+      const existing = uniqueByUser.get(participant.userId);
+      if (!existing || participant.role === "Host") {
+        uniqueByUser.set(participant.userId, {
+          userId: participant.userId,
+          username: participant.username,
+          fullName: participant.fullName,
+          role: participant.role,
+          color: participant.color,
+          status: "online"
+        });
+      }
     }
   }
 
-  const list: PublicParticipant[] = Array.from(uniqueByUser.values()).map((p) => ({
-    userId: p.userId,
-    username: p.username,
-    fullName: p.fullName,
-    role: p.role,
-    color: p.color,
-    status: "online"
-  }));
+  // If host is known from roomOwners but not yet connected in socketMap, preserve host in participant list
+  const hostOwner = roomOwners.get(roomId);
+  if (hostOwner && !Array.from(uniqueByUser.values()).some((p) => p.role === "Host")) {
+    uniqueByUser.set(hostOwner.userId, {
+      userId: hostOwner.userId,
+      username: hostOwner.username,
+      fullName: hostOwner.fullName,
+      role: "Host",
+      color: hostOwner.color,
+      status: "online"
+    });
+  }
+
+  const list: PublicParticipant[] = Array.from(uniqueByUser.values());
 
   // Host always at the top of the participant list
   return list.sort((a, b) => {
@@ -119,12 +134,21 @@ function queueSaveDocument(roomId: string, title: string, htmlContent: string, y
   saveTimeouts.set(roomId, timeout);
 }
 
+export function getRoomMemoryState(roomId: string) {
+  const clean = roomId.trim().toUpperCase();
+  return {
+    owner: roomOwners.get(clean),
+    doc: roomDocs.get(clean),
+    participants: getDeduplicatedParticipants(clean)
+  };
+}
+
 export function setupCollabSocket(io: Server): void {
   io.on("connection", (socket: Socket) => {
     let currentRoomId: string | null = null;
     let currentUser: Participant | null = null;
 
-    socket.on("join-room", async (payload: { roomId: string; user?: any; token?: string }) => {
+    socket.on("join-room", async (payload: { roomId: string; roomTitle?: string; contentHtml?: string; user?: any; token?: string }) => {
       try {
         const { roomId, token } = payload;
         if (!roomId) return;
@@ -163,8 +187,16 @@ export function setupCollabSocket(io: Server): void {
         }
 
         // Check if user is Host (owner of the room)
+        const knownOwner = roomOwners.get(cleanRoomId);
         let role: "Host" | "Collaborator" = "Collaborator";
-        if (payload.user?.role === "Host" || payload.user?.fullName?.includes("(Host)")) {
+
+        if (knownOwner) {
+          if (knownOwner.userId === userId || (username && knownOwner.username === username)) {
+            role = "Host";
+          } else {
+            role = "Collaborator";
+          }
+        } else if (payload.user?.role === "Host" || payload.user?.fullName?.includes("(Host)")) {
           role = "Host";
         } else if (payload.user?.role === "Collaborator") {
           role = "Collaborator";
@@ -189,6 +221,30 @@ export function setupCollabSocket(io: Server): void {
           joinedAt: Date.now()
         };
 
+        if (role === "Host") {
+          roomOwners.set(cleanRoomId, {
+            userId,
+            fullName,
+            username,
+            color: currentUser.color
+          });
+
+          if (mongoose.connection.readyState === 1) {
+            try {
+              RoomModel.findOneAndUpdate(
+                { roomId: cleanRoomId },
+                {
+                  roomId: cleanRoomId,
+                  name: payload.roomTitle || "Untitled Room",
+                  ownerId: userId.startsWith("anon-") ? undefined : userId,
+                  ownerName: fullName
+                },
+                { upsert: true }
+              ).catch(() => {});
+            } catch {}
+          }
+        }
+
         if (!roomParticipants.has(cleanRoomId)) {
           roomParticipants.set(cleanRoomId, new Map());
         }
@@ -201,10 +257,14 @@ export function setupCollabSocket(io: Server): void {
           roomYDocs.set(cleanRoomId, ydoc);
         }
 
-        let docTitle = "Untitled Document";
-        let docContent = "<h1>" + cleanRoomId + "</h1><p>Start collaborating in real time...</p>";
+        let docTitle = payload.roomTitle || "Untitled Document";
+        let docContent = payload.contentHtml || "<h1>" + cleanRoomId + "</h1><p>Start collaborating in real time...</p>";
 
-        if (roomDocs.has(cleanRoomId)) {
+        if (payload.contentHtml && role === "Host") {
+          docContent = payload.contentHtml;
+          docTitle = payload.roomTitle || docTitle;
+          roomDocs.set(cleanRoomId, { title: docTitle, htmlContent: docContent });
+        } else if (roomDocs.has(cleanRoomId)) {
           const cached = roomDocs.get(cleanRoomId)!;
           docTitle = cached.title;
           docContent = cached.htmlContent;
@@ -230,6 +290,8 @@ export function setupCollabSocket(io: Server): void {
 
         const fullStateBase64 = Buffer.from(Y.encodeStateAsUpdate(ydoc)).toString("base64");
 
+        const hostOwner = roomOwners.get(cleanRoomId);
+
         // 1. Send authoritative document state to newly joined socket
         socket.emit("init-document", {
           roomId: cleanRoomId,
@@ -238,7 +300,8 @@ export function setupCollabSocket(io: Server): void {
           crdtUpdateBase64: fullStateBase64,
           crdtVersion: currentVersion,
           role: currentUser.role,
-          isHost: currentUser.role === "Host"
+          isHost: currentUser.role === "Host",
+          hostUser: hostOwner || (currentUser.role === "Host" ? currentUser : undefined)
         });
 
         // Backwards compatibility for existing crdtService listeners

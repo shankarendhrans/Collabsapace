@@ -2,7 +2,8 @@ import { Router, Response } from "express";
 import crypto from "crypto";
 import { RoomModel } from "../models/Room";
 import { DocumentModel } from "../models/Document";
-import { requireAuth, AuthRequest } from "../middleware/auth";
+import { requireAuth, optionalAuth, AuthRequest } from "../middleware/auth";
+import { getRoomMemoryState } from "../socket/collabSocket";
 
 const router = Router();
 
@@ -116,17 +117,40 @@ router.get("/recent", requireAuth, async (req: AuthRequest, res: Response) => {
   }
 });
 
-router.get("/:roomId", requireAuth, async (req: AuthRequest, res: Response) => {
+router.get("/:roomId", optionalAuth, async (req: AuthRequest, res: Response) => {
   try {
     const { roomId } = req.params;
     const cleanRoomId = roomId.trim().toUpperCase();
-    const room = await RoomModel.findOne({ roomId: cleanRoomId });
-    if (!room) {
+    const mem = getRoomMemoryState(cleanRoomId);
+
+    let room = null;
+    let doc = null;
+    try {
+      room = await RoomModel.findOne({ roomId: cleanRoomId });
+      doc = await DocumentModel.findOne({ roomId: cleanRoomId });
+    } catch {}
+
+    if (!room && !mem.doc && !mem.owner) {
       res.status(404).json({ error: "Room not found." });
       return;
     }
-    const doc = await DocumentModel.findOne({ roomId: cleanRoomId });
-    res.json({ room, document: doc });
+
+    res.json({
+      room: room || {
+        roomId: cleanRoomId,
+        name: mem.doc?.title || `Workspace ${cleanRoomId}`,
+        ownerId: mem.owner?.userId || "remote-host",
+        ownerName: mem.owner?.fullName || "Host",
+        access: "open"
+      },
+      document: doc || {
+        roomId: cleanRoomId,
+        title: mem.doc?.title || `Workspace ${cleanRoomId}`,
+        htmlContent: mem.doc?.htmlContent || "<p>Start collaborating in real time...</p>"
+      },
+      hostUser: mem.owner,
+      participants: mem.participants
+    });
   } catch (err) {
     res.status(500).json({ error: "Failed to fetch room details." });
   }
