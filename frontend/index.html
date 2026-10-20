@@ -1351,6 +1351,13 @@
         showAuthFeedback("Please sign in or register to access CollabSpace rooms.", true);
         page = "auth";
       }
+      if (page !== "editor") {
+        currentRoomId = null;
+        sessionStorage.removeItem("cs_active_room");
+        try {
+          window.history.replaceState({}, "", window.location.pathname);
+        } catch {}
+      }
       pageAuth.classList.add("hidden");
       pageDashboard.classList.add("hidden");
       pageEditor.classList.add("hidden");
@@ -1496,6 +1503,19 @@
       lbl.textContent = score >= 70 ? "Strong password ready." : "Use at least 8 characters with letters and numbers.";
     });
 
+    async function attemptFetchWithTimeout(url, options, timeoutMs = 30000) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const resp = await fetch(url, { ...options, signal: controller.signal });
+        clearTimeout(timer);
+        return resp;
+      } catch (err) {
+        clearTimeout(timer);
+        throw err;
+      }
+    }
+
     formRegister.addEventListener("submit", async (e) => {
       e.preventDefault();
       const fullName = document.getElementById("regFullName").value.trim();
@@ -1514,36 +1534,52 @@
       const originalText = btnSubmit ? btnSubmit.innerHTML : "";
       if (btnSubmit) {
         btnSubmit.disabled = true;
-        btnSubmit.innerHTML = `<span>Saving to MongoDB Atlas (waking server)...</span>`;
+        btnSubmit.innerHTML = `<span>Saving to MongoDB Atlas...</span>`;
       }
 
       let backendUser = null;
       let token = "";
 
-      // 1. Save directly into MongoDB via Backend API
+      // 1. Save directly into MongoDB via Backend API with auto-retry
       try {
-        const resp = await fetch(socketBaseUrl + "/api/auth/register", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ fullName, email, username, password, confirmPassword: confirm })
-        });
+        let resp;
+        try {
+          resp = await attemptFetchWithTimeout(socketBaseUrl + "/api/auth/register", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ fullName, email, username, password, confirmPassword: confirm })
+          }, 25000);
+        } catch (firstErr) {
+          if (btnSubmit) btnSubmit.innerHTML = `<span>Connecting to database server...</span>`;
+          await new Promise(r => setTimeout(r, 1500));
+          resp = await attemptFetchWithTimeout(socketBaseUrl + "/api/auth/register", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ fullName, email, username, password, confirmPassword: confirm })
+          }, 25000);
+        }
+
         const data = await resp.json();
         if (!resp.ok) {
           if (btnSubmit) { btnSubmit.disabled = false; btnSubmit.innerHTML = originalText; }
+          if (resp.status === 409 || (data.error && data.error.includes("already exists"))) {
+            switchAuthMode("login");
+            const idInput = document.getElementById("loginIdentifier");
+            if (idInput) idInput.value = username || email;
+            return showAuthFeedback("An account with this email/username already exists! Please enter your password to sign in.");
+          }
           return showAuthFeedback(data.error || "Registration failed. Please check your credentials.");
         }
         backendUser = data.user;
         token = data.token;
       } catch (networkErr) {
-        console.warn("[CollabSpace] Backend registration offline, attempting fallback:", networkErr);
-        if (btnSubmit) { btnSubmit.disabled = false; btnSubmit.innerHTML = originalText; }
-        return showAuthFeedback("Cloud database server is waking up (Render free tier). Please wait 15-20 seconds and click Create Account again.");
+        console.warn("[CollabSpace] Cloud registration unreachable, fallback to local workspace:", networkErr);
       }
 
-      // 2. Keep local mirror for instantaneous offline operations
+      // 2. Keep local mirror for instantaneous operations
       const users = getUsersDB();
       const passwordHash = await hashPassword(password, email);
-      const userId = backendUser?.id || backendUser?._id;
+      const userId = backendUser?.id || backendUser?._id || ("usr_" + Date.now());
       const newUser = { id: userId, fullName, email, username, passwordHash, token, createdAt: new Date().toISOString() };
       const existingIdx = users.findIndex(u => u.email === email || u.username === username);
       if (existingIdx >= 0) {
@@ -1558,7 +1594,11 @@
       if (token) localStorage.setItem("collabspace_token", token);
 
       if (btnSubmit) { btnSubmit.disabled = false; btnSubmit.innerHTML = originalText; }
-      showToast(`Account successfully created & saved in MongoDB Atlas! Welcome, ${fullName}!`);
+      if (backendUser) {
+        showToast(`Account successfully created & saved in MongoDB Atlas! Welcome, ${fullName}!`);
+      } else {
+        showToast(`Account created in local workspace! Welcome, ${fullName}!`);
+      }
       const pendingRoomReg = localStorage.getItem("cs_pending_room");
       if (pendingRoomReg) {
         localStorage.removeItem("cs_pending_room");
@@ -1585,13 +1625,25 @@
       let backendUser = null;
       let token = "";
 
-      // 1. Authenticate against MongoDB on Backend API
+      // 1. Authenticate against MongoDB on Backend API with auto-retry
       try {
-        const resp = await fetch(socketBaseUrl + "/api/auth/login", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ identifier, password, rememberMe: remember })
-        });
+        let resp;
+        try {
+          resp = await attemptFetchWithTimeout(socketBaseUrl + "/api/auth/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ identifier, password, rememberMe: remember })
+          }, 25000);
+        } catch (firstErr) {
+          if (btnSubmit) btnSubmit.innerHTML = `<span>Connecting to database server...</span>`;
+          await new Promise(r => setTimeout(r, 1500));
+          resp = await attemptFetchWithTimeout(socketBaseUrl + "/api/auth/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ identifier, password, rememberMe: remember })
+          }, 25000);
+        }
+
         const data = await resp.json();
         if (resp.ok && data.user) {
           backendUser = data.user;
@@ -1817,6 +1869,7 @@
       const docs = getDocsDB();
       if (!rooms[cleanRoomId]) {
         rooms[cleanRoomId] = {
+          roomId: cleanRoomId,
           id: cleanRoomId,
           name: fallbackName || `Workspace ${cleanRoomId}`,
           description: "Real-Time Collaborative Workspace",
@@ -2085,6 +2138,12 @@
       const { room, doc } = ensureRoomExistsLocally(cleanRoomId);
 
       currentRoomId = cleanRoomId;
+      sessionStorage.setItem("cs_active_room", cleanRoomId);
+      try {
+        const cleanUrl = window.location.pathname + "?room=" + encodeURIComponent(cleanRoomId);
+        window.history.replaceState({ roomId: cleanRoomId }, "", cleanUrl);
+      } catch {}
+
       crdtVersion = doc.crdtVersion || 1;
       editorDocTitle.value = doc.title || room.name;
       document.getElementById("editorRoomIdDisplay").textContent = cleanRoomId;
@@ -3462,13 +3521,14 @@
           return;
         }
 
-        const rooms = getRoomsDB();
-        const roomIds = Object.keys(rooms);
-        if (roomIds.length > 0) {
-          openRoomInEditor(roomIds[0]);
-        } else {
-          navigateTo("dashboard");
+        const activeRoom = sessionStorage.getItem("cs_active_room");
+        if (activeRoom) {
+          ensureRoomExistsLocally(activeRoom);
+          openRoomInEditor(activeRoom);
+          return;
         }
+
+        navigateTo("dashboard");
       } else {
         navigateTo("auth");
       }
