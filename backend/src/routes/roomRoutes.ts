@@ -6,7 +6,8 @@ import { requireAuth, AuthRequest } from "../middleware/auth";
 
 const router = Router();
 
-router.post("/create", requireAuth, async (req: AuthRequest, res: Response) => {
+// Helper to create room
+async function handleCreateRoom(req: AuthRequest, res: Response) {
   try {
     const { name, description, defaultRole } = req.body;
     if (!name || !name.trim()) {
@@ -38,18 +39,18 @@ router.post("/create", requireAuth, async (req: AuthRequest, res: Response) => {
   } catch (err) {
     res.status(500).json({ error: "Failed to create room." });
   }
-});
+}
 
-router.post("/join", requireAuth, async (req: AuthRequest, res: Response) => {
+// Helper to join room
+async function handleJoinRoom(identifier: string, req: AuthRequest, res: Response) {
   try {
-    const { roomIdentifier } = req.body;
-    if (!roomIdentifier) {
+    if (!identifier) {
       res.status(400).json({ error: "Room ID or invitation link is required." });
       return;
     }
 
-    const match = String(roomIdentifier).toUpperCase().match(/CS-[A-Z0-9]{4,10}/);
-    const cleanRoomId = match ? match[0] : String(roomIdentifier).trim().toUpperCase();
+    const match = String(identifier).toUpperCase().match(/CS-[A-Z0-9]{4,10}/);
+    const cleanRoomId = match ? match[0] : String(identifier).trim().toUpperCase();
 
     const room = await RoomModel.findOne({ roomId: cleanRoomId });
     if (!room) {
@@ -73,23 +74,61 @@ router.post("/join", requireAuth, async (req: AuthRequest, res: Response) => {
       await room.save();
     }
 
-    const doc = await DocumentModel.findOne({ roomId: cleanRoomId });
+    let doc = await DocumentModel.findOne({ roomId: cleanRoomId });
+    if (!doc) {
+      doc = await DocumentModel.create({
+        roomId: cleanRoomId,
+        title: room.name,
+        htmlContent: `<p>Start collaborating in real time...</p>`
+      });
+    }
+
     res.json({ room, document: doc });
   } catch (err) {
     res.status(500).json({ error: "Unable to join room." });
   }
+}
+
+router.post("/create", requireAuth, handleCreateRoom);
+router.post("/", requireAuth, handleCreateRoom);
+
+router.post("/join", requireAuth, async (req: AuthRequest, res: Response) => {
+  await handleJoinRoom(req.body.roomIdentifier, req, res);
+});
+
+router.post("/:roomId/join", requireAuth, async (req: AuthRequest, res: Response) => {
+  await handleJoinRoom(req.params.roomId, req, res);
 });
 
 router.get("/recent", requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const rooms = await RoomModel.find({
-      "authorizedMembers.userId": req.user!.userId
+      $or: [
+        { ownerId: req.user!.userId },
+        { "authorizedMembers.userId": req.user!.userId }
+      ]
     })
       .sort({ updatedAt: -1 })
-      .limit(12);
+      .limit(16);
     res.json({ rooms });
   } catch (err) {
     res.status(500).json({ error: "Unable to load recent rooms." });
+  }
+});
+
+router.get("/:roomId", requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const { roomId } = req.params;
+    const cleanRoomId = roomId.trim().toUpperCase();
+    const room = await RoomModel.findOne({ roomId: cleanRoomId });
+    if (!room) {
+      res.status(404).json({ error: "Room not found." });
+      return;
+    }
+    const doc = await DocumentModel.findOne({ roomId: cleanRoomId });
+    res.json({ room, document: doc });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch room details." });
   }
 });
 

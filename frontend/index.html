@@ -8,6 +8,7 @@
   <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js" crossorigin="anonymous"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js" crossorigin="anonymous"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&family=Merriweather:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet" />
@@ -1723,7 +1724,130 @@
     let connectionState = "Connected";
 
     let collabChannel = null;
+    let realtimeSocket = null;
+    const socketBaseUrl = (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")
+      ? "http://localhost:5000"
+      : (localStorage.getItem("cs_backend_url") || "https://collabspace-backend.onrender.com");
+
     try {
+      if (typeof io !== "undefined") {
+        realtimeSocket = io(socketBaseUrl, {
+          transports: ["websocket", "polling"],
+          reconnectionAttempts: 20,
+          reconnectionDelay: 1000
+        });
+
+        realtimeSocket.on("connect", () => {
+          connectionState = "Connected";
+          const connBadge = document.getElementById("editorConnBadge");
+          if (connBadge) connBadge.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span><span>Connected</span>`;
+          if (currentRoomId) {
+            realtimeSocket.emit("join-room", {
+              roomId: currentRoomId,
+              user: currentUser,
+              token: currentUser?.token
+            });
+          }
+        });
+
+        realtimeSocket.on("reconnect_attempt", () => {
+          connectionState = "Reconnecting";
+          const connBadge = document.getElementById("editorConnBadge");
+          if (connBadge) connBadge.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"></span><span>Reconnecting...</span>`;
+        });
+
+        realtimeSocket.on("disconnect", () => {
+          connectionState = "Offline";
+          const connBadge = document.getElementById("editorConnBadge");
+          if (connBadge) connBadge.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-red-400"></span><span>Offline</span>`;
+        });
+
+        // 1. Authoritative Deduplicated Participant List
+        realtimeSocket.on("participants-update", (data) => {
+          if (!data || data.roomId !== currentRoomId) return;
+          if (Array.isArray(data.participants)) {
+            renderCollaboratorsList(data.participants.map(p => ({
+              name: p.userId === currentUser?.id ? p.fullName + " (You)" : p.fullName,
+              color: p.color || "#2563eb",
+              role: p.role || "Collaborator"
+            })));
+          }
+        });
+
+        // 2. Initial Document State on Late Join
+        realtimeSocket.on("init-document", (data) => {
+          if (!data || data.roomId !== currentRoomId) return;
+          suppressEditorBroadcast = true;
+          if (data.contentHtml) {
+            richTextEditor.innerHTML = data.contentHtml;
+          }
+          if (data.title) {
+            editorDocTitle.value = data.title;
+          }
+          crdtVersion = data.crdtVersion || crdtVersion;
+          suppressEditorBroadcast = false;
+          updateEditorCounters();
+
+          const roleBadge = document.getElementById("editorRoleBadge");
+          if (roleBadge) {
+            const isOwner = data.isHost || data.role === "Host";
+            roleBadge.textContent = isOwner ? "Owner / Host" : "Collaborator";
+            roleBadge.className = isOwner
+              ? "text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-blue-100 text-blue-800"
+              : "text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800";
+          }
+        });
+
+        // 3. Real-Time Bidirectional Document Synchronization
+        realtimeSocket.on("doc-update", (msg) => {
+          if (!msg || msg.roomId !== currentRoomId) return;
+          suppressEditorBroadcast = true;
+          if (msg.contentHtml !== undefined && richTextEditor.innerHTML !== msg.contentHtml) {
+            richTextEditor.innerHTML = msg.contentHtml;
+          }
+          if (msg.title && editorDocTitle.value !== msg.title) {
+            editorDocTitle.value = msg.title;
+          }
+          crdtVersion = Math.max(crdtVersion, msg.crdtVersion || 1);
+          updateEditorCounters();
+          suppressEditorBroadcast = false;
+          const indicator = document.getElementById("remoteCursorIndicator");
+          if (indicator) indicator.textContent = `${msg.userName || "Collaborator"} edited @ v${crdtVersion}`;
+        });
+
+        // 4. Projected File Sync
+        realtimeSocket.on("project-file", (data) => {
+          if (!data || data.roomId !== currentRoomId) return;
+          if (data.fileRecord) {
+            renderProjectedFileFromRecord(data.fileRecord, false);
+            showToast(`${data.user?.fullName || "Collaborator"} projected "${data.fileRecord.name}"`);
+          }
+        });
+
+        // 5. Canvas Sketch Sync
+        realtimeSocket.on("sketch-update", (data) => {
+          if (!data || data.roomId !== currentRoomId) return;
+          const c = document.getElementById(data.targetCanvasId);
+          if (c && data.dataUrl) {
+            const img = new Image();
+            img.onload = () => {
+              const ctx = c.getContext("2d");
+              ctx.clearRect(0, 0, c.width, c.height);
+              ctx.drawImage(img, 0, 0);
+            };
+            img.src = data.dataUrl;
+          }
+        });
+
+        realtimeSocket.on("user-joined-notification", (data) => {
+          showToast(`${data.fullName} joined the room (${data.role})`);
+        });
+
+        realtimeSocket.on("collaborator-left", (data) => {
+          if (data.fullName) showToast(`${data.fullName} left the room`);
+        });
+      }
+
       if (typeof BroadcastChannel !== "undefined") {
         collabChannel = new BroadcastChannel("collabspace_realtime_crdt_bus");
         collabChannel.onmessage = (event) => {
@@ -1760,7 +1884,9 @@
           }
         };
       }
-    } catch {}
+    } catch (e) {
+      console.warn("Realtime communication init warning:", e);
+    }
 
     function openRoomInEditor(roomId) {
       const rooms = getRoomsDB();
@@ -1801,6 +1927,16 @@
       renderCollaboratorsList([
         { name: currentUser.fullName + " (You)", color: "#2563eb", role: isOwner ? "Host" : "Editor" }
       ]);
+
+      // Connect to Real-time Room over Socket.IO
+      if (realtimeSocket && realtimeSocket.connected) {
+        realtimeSocket.emit("join-room", {
+          roomId: currentRoomId,
+          user: currentUser,
+          token: currentUser?.token
+        });
+      }
+
       renderAnnotations();
       updateEditorCounters();
       setWorkspaceMode(doc.projectedFile ? "split" : "notes");
@@ -1828,6 +1964,21 @@
       if (connectionState === "Connected") {
         saveBadge.textContent = "✓ Saved & Synced";
         saveBadge.className = "text-emerald-600 font-medium";
+
+        // Emit over live Socket.IO connection
+        if (realtimeSocket && realtimeSocket.connected) {
+          try {
+            realtimeSocket.emit("doc-update", {
+              roomId: currentRoomId,
+              title: docs[currentRoomId].title,
+              contentHtml: docs[currentRoomId].contentHtml,
+              crdtVersion,
+              user: currentUser
+            });
+          } catch {}
+        }
+
+        // Local BroadcastChannel fallback
         if (collabChannel) {
           try {
             collabChannel.postMessage({
@@ -2924,8 +3075,16 @@
       });
     });
 
-    document.getElementById("btnBackToDashboard").addEventListener("click", () => navigateTo("dashboard"));
+    document.getElementById("btnBackToDashboard").addEventListener("click", () => {
+      if (realtimeSocket && currentRoomId) {
+        realtimeSocket.emit("leave-room", { roomId: currentRoomId });
+      }
+      navigateTo("dashboard");
+    });
     document.getElementById("btnLeaveRoom").addEventListener("click", () => {
+      if (realtimeSocket && currentRoomId) {
+        realtimeSocket.emit("leave-room", { roomId: currentRoomId });
+      }
       if (coEditorInterval) { clearInterval(coEditorInterval); coEditorInterval = null; }
       navigateTo("dashboard");
     });

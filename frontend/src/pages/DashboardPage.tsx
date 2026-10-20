@@ -53,7 +53,7 @@ const DashboardPage: React.FC = () => {
       const res = await api.post('/rooms', { name: roomName, description: roomDesc });
       navigate(`/room/${res.data.room.roomId}`);
     } catch (err: any) {
-      setError(err?.response?.data?.message || 'Failed to create room');
+      setError(err?.response?.data?.error || err?.response?.data?.message || 'Failed to create room');
     } finally {
       setCreating(false);
     }
@@ -67,7 +67,7 @@ const DashboardPage: React.FC = () => {
       await api.post(`/rooms/${cleaned}/join`);
       navigate(`/room/${cleaned}`);
     } catch (err: any) {
-      setError(err?.response?.data?.message || 'Room not found or access denied');
+      setError(err?.response?.data?.error || err?.response?.data?.message || 'Room not found or access denied');
     }
   };
 
