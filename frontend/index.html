@@ -1011,12 +1011,36 @@
 
       <!-- RIGHT SIDEBAR: Collaborators & Sticky Annotations -->
       <aside id="rightSidebarCol" class="lg:col-span-3 space-y-4">
+        <!-- BOX 1: ROOM HOST / OWNER -->
+        <div class="theme-surface border theme-border rounded-2xl p-4 space-y-2.5 shadow-sm">
+          <div class="flex items-center justify-between">
+            <h3 class="text-xs font-bold uppercase tracking-wider text-amber-500 flex items-center gap-1.5">
+              <svg class="w-3.5 h-3.5 text-amber-500" fill="currentColor" viewBox="0 0 24 24"><path d="M5 16L3 5l5.5 5L12 4l3.5 6L21 5l-2 11H5zm14 3c0 .6-.4 1-1 1H6c-.6 0-1-.4-1-1v-1h14v1z"/></svg>
+              Room Host / Owner
+            </h3>
+            <span id="sidebarHostBadge" class="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200">Host</span>
+          </div>
+          <div id="sidebarHostCard" class="text-xs">
+            <div class="p-2.5 rounded-xl theme-subtle border theme-border flex items-center justify-between">
+              <div class="flex items-center gap-2.5">
+                <div class="w-7 h-7 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center justify-center ring-2 ring-amber-400/50">H</div>
+                <div class="font-semibold">Host</div>
+              </div>
+              <span class="text-[10px] font-mono theme-muted">Host</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- BOX 2: COLLABORATORS & PARTICIPANTS (Under the Host) -->
         <div class="theme-surface border theme-border rounded-2xl p-4 space-y-3 shadow-sm">
           <div class="flex items-center justify-between">
-            <h3 class="text-xs font-bold uppercase tracking-wider theme-muted">Active Collaborators</h3>
-            <span id="sidebarCollabCount" class="text-xs font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">1 Online</span>
+            <h3 class="text-xs font-bold uppercase tracking-wider text-blue-600 dark:text-blue-400 flex items-center gap-1.5">
+              <svg class="w-3.5 h-3.5 text-blue-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+              Collaborators &amp; Members
+            </h3>
+            <span id="sidebarCollabCount" class="text-xs font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">0 Joined</span>
           </div>
-          <div id="collaboratorAvatars" class="flex items-center gap-1.5 py-1"></div>
+          <div id="collaboratorAvatars" class="flex items-center gap-1.5 py-0.5"></div>
           <div id="sidebarCollaboratorList" class="space-y-2 text-xs"></div>
           <div class="pt-2 border-t theme-border space-y-2">
             <button id="btnSidebarCopyInvite" type="button" class="w-full py-1.5 rounded-xl border theme-border text-xs font-semibold hover:opacity-80">
@@ -1466,19 +1490,53 @@
       if (password.length < 8) return showAuthFeedback("Password must be at least 8 characters long.");
       if (password !== confirm) return showAuthFeedback("Password and Confirm Password do not match.");
 
-      const users = getUsersDB();
-      if (users.some(u => u.email === email || u.username === username)) {
-        return showAuthFeedback("An account with this email or username already exists.");
+      const btnSubmit = formRegister.querySelector("button[type='submit']");
+      const originalText = btnSubmit ? btnSubmit.innerHTML : "";
+      if (btnSubmit) {
+        btnSubmit.disabled = true;
+        btnSubmit.innerHTML = `<span>Saving to MongoDB Atlas...</span>`;
       }
 
+      let backendUser = null;
+      let token = "";
+
+      // 1. Save directly into MongoDB via Backend API
+      try {
+        const resp = await fetch(socketBaseUrl + "/api/auth/register", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ fullName, email, username, password, confirmPassword: confirm })
+        });
+        const data = await resp.json();
+        if (!resp.ok) {
+          if (btnSubmit) { btnSubmit.disabled = false; btnSubmit.innerHTML = originalText; }
+          return showAuthFeedback(data.error || "Registration failed. Please check your credentials.");
+        }
+        backendUser = data.user;
+        token = data.token;
+      } catch (networkErr) {
+        console.warn("[CollabSpace] Backend registration offline, fallback to local storage:", networkErr);
+      }
+
+      // 2. Keep local mirror for instantaneous offline operations
+      const users = getUsersDB();
       const passwordHash = await hashPassword(password, email);
-      const newUser = { id: "usr_" + Date.now(), fullName, email, username, passwordHash, createdAt: new Date().toISOString() };
-      users.push(newUser);
+      const userId = backendUser?.id || backendUser?._id || ("usr_" + Date.now());
+      const newUser = { id: userId, fullName, email, username, passwordHash, token, createdAt: new Date().toISOString() };
+      const existingIdx = users.findIndex(u => u.email === email || u.username === username);
+      if (existingIdx >= 0) {
+        users[existingIdx] = newUser;
+      } else {
+        users.push(newUser);
+      }
       saveUsersDB(users);
 
-      currentUser = { id: newUser.id, fullName, email, username };
+      currentUser = { id: userId, fullName, email, username, token };
       StorageService.set("cs_active_user", currentUser);
-      showToast(`Welcome to CollabSpace, ${fullName}!`);
+      if (token) localStorage.setItem("collabspace_token", token);
+
+      if (btnSubmit) { btnSubmit.disabled = false; btnSubmit.innerHTML = originalText; }
+      showToast(`Account created & saved in MongoDB! Welcome, ${fullName}!`);
       const pendingRoomReg = localStorage.getItem("cs_pending_room");
       if (pendingRoomReg) {
         localStorage.removeItem("cs_pending_room");
@@ -1493,17 +1551,62 @@
       e.preventDefault();
       const identifier = document.getElementById("loginIdentifier").value.trim().toLowerCase();
       const password = document.getElementById("loginPassword").value;
+      const remember = document.getElementById("loginRemember").checked;
 
-      const users = getUsersDB();
-      const found = users.find(u => u.email === identifier || u.username === identifier);
-      if (!found) return showAuthFeedback("No registered account found with that email or username. Please register first.");
+      const btnSubmit = formLogin.querySelector("button[type='submit']");
+      const originalText = btnSubmit ? btnSubmit.innerHTML : "";
+      if (btnSubmit) {
+        btnSubmit.disabled = true;
+        btnSubmit.innerHTML = `<span>Verifying credentials...</span>`;
+      }
 
-      const candidateHash = await hashPassword(password, found.email);
-      if (candidateHash !== found.passwordHash) return showAuthFeedback("Invalid password. Please try again.");
+      let backendUser = null;
+      let token = "";
 
-      currentUser = { id: found.id, fullName: found.fullName, email: found.email, username: found.username };
-      if (document.getElementById("loginRemember").checked) StorageService.set("cs_active_user", currentUser);
-      showToast(`Signed in as ${found.fullName}`);
+      // 1. Authenticate against MongoDB on Backend API
+      try {
+        const resp = await fetch(socketBaseUrl + "/api/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ identifier, password, rememberMe: remember })
+        });
+        const data = await resp.json();
+        if (resp.ok && data.user) {
+          backendUser = data.user;
+          token = data.token;
+        } else if (resp.status === 401 || resp.status === 400) {
+          if (btnSubmit) { btnSubmit.disabled = false; btnSubmit.innerHTML = originalText; }
+          return showAuthFeedback(data.error || "Invalid credentials. Please check your email/username and password.");
+        }
+      } catch (networkErr) {
+        console.warn("[CollabSpace] Backend login offline, attempting local mirror:", networkErr);
+      }
+
+      if (btnSubmit) { btnSubmit.disabled = false; btnSubmit.innerHTML = originalText; }
+
+      // 2. Set Active User
+      if (backendUser) {
+        currentUser = {
+          id: backendUser.id || backendUser._id,
+          fullName: backendUser.fullName,
+          email: backendUser.email,
+          username: backendUser.username,
+          token
+        };
+      } else {
+        // Fallback to local storage credentials if backend is asleep
+        const users = getUsersDB();
+        const found = users.find(u => u.email === identifier || u.username === identifier);
+        if (!found) return showAuthFeedback("No registered account found with that email or username. Please register first.");
+        const candidateHash = await hashPassword(password, found.email);
+        if (candidateHash !== found.passwordHash) return showAuthFeedback("Invalid password. Please try again.");
+        currentUser = { id: found.id, fullName: found.fullName, email: found.email, username: found.username };
+      }
+
+      StorageService.set("cs_active_user", currentUser);
+      if (token) localStorage.setItem("collabspace_token", token);
+
+      showToast(`Signed in as ${currentUser.fullName}`);
       const pendingRoomLog = localStorage.getItem("cs_pending_room");
       if (pendingRoomLog) {
         localStorage.removeItem("cs_pending_room");
@@ -1983,9 +2086,16 @@
         resetProjectorToEmpty();
       }
 
-      renderCollaboratorsList([
-        { name: currentUser.fullName + " (You)", color: "#2563eb", role: isOwner ? "Host" : "Editor" }
-      ]);
+      if (isOwner) {
+        renderCollaboratorsList([
+          { userId: currentUser.id, name: currentUser.fullName + " (You)", color: "#2563eb", role: "Host" }
+        ]);
+      } else {
+        renderCollaboratorsList([
+          { userId: room.ownerId || "host_owner", name: room.ownerName || "Host", color: "#2563eb", role: "Host" },
+          { userId: currentUser.id, name: currentUser.fullName + " (You)", color: "#10b981", role: "Collaborator" }
+        ]);
+      }
 
       // Connect to Real-time Room over Socket.IO
       const userPayload = {
@@ -2908,24 +3018,108 @@
 
     function renderCollaboratorsList(users) {
       const avatarBar = document.getElementById("collaboratorAvatars");
-      const sidebarList = document.getElementById("sidebarCollaboratorList");
-      document.getElementById("sidebarCollabCount").textContent = `${users.length} Online`;
+      const hostContainer = document.getElementById("sidebarHostCard");
+      const collabContainer = document.getElementById("sidebarCollaboratorList");
+      const collabCount = document.getElementById("sidebarCollabCount");
 
-      avatarBar.innerHTML = users.map(u => `
-        <div class="w-7 h-7 rounded-full text-white text-xs font-bold flex items-center justify-center ring-2 ring-white" style="background:${u.color}" title="${u.name}">
-          ${u.name.charAt(0).toUpperCase()}
-        </div>
-      `).join("");
+      if (!Array.isArray(users)) users = [];
 
-      sidebarList.innerHTML = users.map(u => `
-        <div class="flex items-center justify-between p-2 rounded-xl theme-subtle border theme-border">
-          <div class="flex items-center gap-2">
-            <span class="w-2.5 h-2.5 rounded-full" style="background:${u.color}"></span>
-            <span class="font-semibold">${u.name}</span>
-          </div>
-          <span class="text-[10px] font-mono theme-muted">${u.role}</span>
-        </div>
-      `).join("");
+      // Identify Host (by role === 'Host', or owner of the room, or first user)
+      const rooms = getRoomsDB();
+      const currentRoom = currentRoomId ? rooms[currentRoomId] : null;
+      let hostUser = users.find(u => u.role === "Host" || (u.name && u.name.includes("Host")));
+
+      if (!hostUser && currentRoom && currentRoom.ownerId) {
+        hostUser = users.find(u => u.userId === currentRoom.ownerId);
+      }
+      if (!hostUser && users.length > 0) {
+        hostUser = users[0];
+      }
+
+      // Collaborators list (everyone except host)
+      const collaborators = users.filter(u => u !== hostUser);
+
+      // 1. Render Dedicated Room Host Box
+      if (hostContainer) {
+        if (hostUser) {
+          const isYou = hostUser.name && (hostUser.name.includes("(You)") || hostUser.userId === currentUser?.id);
+          const rawName = hostUser.name ? hostUser.name.replace(/\s*\(You\)\s*/i, "").trim() : "Host";
+          const displayName = isYou ? `${rawName} (You)` : rawName;
+          const initial = rawName.charAt(0).toUpperCase() || "H";
+          hostContainer.innerHTML = `
+            <div class="p-2.5 rounded-xl theme-subtle border theme-border flex items-center justify-between">
+              <div class="flex items-center gap-2.5">
+                <div class="w-8 h-8 rounded-full text-white text-xs font-bold flex items-center justify-center ring-2 ring-amber-400 shadow-sm" style="background:${hostUser.color || '#2563eb'}">
+                  ${initial}
+                </div>
+                <div>
+                  <div class="font-bold flex items-center gap-1.5">
+                    <span>${displayName}</span>
+                  </div>
+                  <span class="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1">
+                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                    Room Host • Online
+                  </span>
+                </div>
+              </div>
+              <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200">Owner</span>
+            </div>
+          `;
+        } else {
+          hostContainer.innerHTML = `
+            <div class="p-2.5 rounded-xl theme-subtle border border-dashed theme-border text-center theme-muted text-xs italic">
+              Host connecting...
+            </div>
+          `;
+        }
+      }
+
+      // 2. Render Collaborators & Members List (In separate box under the Host)
+      if (collabCount) {
+        collabCount.textContent = `${collaborators.length} ${collaborators.length === 1 ? 'Member' : 'Members'}`;
+      }
+
+      if (avatarBar) {
+        avatarBar.innerHTML = users.map(u => {
+          const name = u.name || u.fullName || "User";
+          const cleanName = name.replace(/\s*\(You\)\s*/i, "").trim();
+          const initial = cleanName.charAt(0).toUpperCase() || "U";
+          return `
+            <div class="w-7 h-7 rounded-full text-white text-xs font-bold flex items-center justify-center ring-2 ring-white shadow-sm" style="background:${u.color || '#2563eb'}" title="${name} (${u.role || 'Member'})">
+              ${initial}
+            </div>
+          `;
+        }).join("");
+      }
+
+      if (collabContainer) {
+        if (collaborators.length === 0) {
+          collabContainer.innerHTML = `
+            <div class="p-3 rounded-xl border border-dashed theme-border text-center theme-muted text-xs space-y-1">
+              <span class="block font-semibold">No other collaborators joined yet</span>
+              <p class="text-[11px] opacity-80">Share the invite link so teammates can join this room.</p>
+            </div>
+          `;
+        } else {
+          collabContainer.innerHTML = collaborators.map(u => {
+            const rawName = u.name ? u.name.replace(/\s*\(You\)\s*/i, "").trim() : "Collaborator";
+            const isYou = u.name && (u.name.includes("(You)") || u.userId === currentUser?.id);
+            const displayName = isYou ? `${rawName} (You)` : rawName;
+            const initial = rawName.charAt(0).toUpperCase() || "C";
+            return `
+              <div class="flex items-center justify-between p-2 rounded-xl theme-subtle border theme-border">
+                <div class="flex items-center gap-2">
+                  <div class="w-6 h-6 rounded-full text-white text-[11px] font-bold flex items-center justify-center" style="background:${u.color || '#10b981'}">
+                    ${initial}
+                  </div>
+                  <span class="font-semibold">${displayName}</span>
+                </div>
+                <span class="text-[10px] font-medium theme-muted px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 border theme-border">${u.role || 'Member'}</span>
+              </div>
+            `;
+          }).join("");
+        }
+      }
     }
 
     document.getElementById("btnSimulateCoEditor").addEventListener("click", () => {

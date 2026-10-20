@@ -166,6 +166,8 @@ export function setupCollabSocket(io: Server): void {
         let role: "Host" | "Collaborator" = "Collaborator";
         if (payload.user?.role === "Host" || payload.user?.fullName?.includes("(Host)")) {
           role = "Host";
+        } else if (payload.user?.role === "Collaborator") {
+          role = "Collaborator";
         } else if (mongoose.connection.readyState === 1) {
           try {
             const room = await RoomModel.findOne({ roomId: cleanRoomId });

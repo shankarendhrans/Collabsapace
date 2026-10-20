@@ -258,47 +258,97 @@ const EditorPage: React.FC = () => {
                   </span>
                 </div>
 
-                <div className="mt-3 space-y-2 max-h-60 overflow-y-auto">
-                  {collaborators.map((c) => {
-                    const isSelf = c.userId === user?.id;
-                    const isHost = c.role === 'Host';
-                    return (
-                      <div
-                        key={c.userId}
-                        className="flex items-center justify-between p-2 rounded-xl bg-slate-950/60 border border-slate-800/80"
-                      >
-                        <div className="flex items-center gap-2.5">
-                          <div
-                            className="w-7 h-7 rounded-full text-white text-xs font-bold flex items-center justify-center ring-2 ring-slate-800"
-                            style={{ backgroundColor: c.color }}
-                          >
-                            {c.fullName.charAt(0).toUpperCase()}
-                          </div>
-                          <div>
-                            <div className="text-xs font-bold text-white flex items-center gap-1">
-                              <span>{c.fullName}</span>
-                              {isSelf && <span className="text-slate-400 font-normal">(You)</span>}
+                <div className="mt-3 space-y-3 max-h-72 overflow-y-auto pr-1">
+                  {/* Host Box */}
+                  <div>
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-amber-400 block mb-1.5 flex items-center gap-1">
+                      <Crown className="w-3 h-3 text-amber-400" />
+                      Room Host / Owner
+                    </span>
+                    {(() => {
+                      const host = collaborators.find(c => c.role === 'Host') || collaborators[0];
+                      if (!host) {
+                        return <div className="text-xs text-slate-500 italic p-2 rounded-xl bg-slate-950/40 border border-slate-800">Connecting host...</div>;
+                      }
+                      const isSelf = host.userId === user?.id;
+                      return (
+                        <div className="flex items-center justify-between p-2 rounded-xl bg-slate-950/80 border border-amber-500/30">
+                          <div className="flex items-center gap-2.5">
+                            <div
+                              className="w-7 h-7 rounded-full text-white text-xs font-bold flex items-center justify-center ring-2 ring-amber-400/50"
+                              style={{ backgroundColor: host.color }}
+                            >
+                              {host.fullName.charAt(0).toUpperCase()}
                             </div>
-                            <span className="text-[10px] text-slate-400 font-mono flex items-center gap-1">
-                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block" />
-                              Active in Room
-                            </span>
+                            <div>
+                              <div className="text-xs font-bold text-white flex items-center gap-1">
+                                <span>{host.fullName}</span>
+                                {isSelf && <span className="text-slate-400 font-normal">(You)</span>}
+                              </div>
+                              <span className="text-[10px] text-emerald-400 font-mono flex items-center gap-1">
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block animate-pulse" />
+                                Host • Online
+                              </span>
+                            </div>
                           </div>
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                            Owner
+                          </span>
                         </div>
+                      );
+                    })()}
+                  </div>
 
-                        {isHost ? (
-                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20 flex items-center gap-1">
-                            <Crown className="w-3 h-3 text-amber-400" />
-                            Host
-                          </span>
-                        ) : (
-                          <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700">
-                            Member
-                          </span>
-                        )}
-                      </div>
-                    );
-                  })}
+                  {/* Collaborators Box */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1">
+                        <Users className="w-3 h-3 text-blue-400" />
+                        Collaborators &amp; Members
+                      </span>
+                      <span className="text-[10px] font-mono text-slate-500">
+                        {collaborators.filter(c => c.role !== 'Host').length} joined
+                      </span>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      {(() => {
+                        const members = collaborators.filter(c => c.role !== 'Host');
+                        if (members.length === 0) {
+                          return (
+                            <div className="p-2.5 rounded-xl border border-dashed border-slate-800 text-center text-slate-500 text-xs">
+                              No other collaborators joined yet
+                            </div>
+                          );
+                        }
+                        return members.map((c) => {
+                          const isSelf = c.userId === user?.id;
+                          return (
+                            <div
+                              key={c.userId}
+                              className="flex items-center justify-between p-2 rounded-xl bg-slate-950/60 border border-slate-800/80"
+                            >
+                              <div className="flex items-center gap-2.5">
+                                <div
+                                  className="w-6 h-6 rounded-full text-white text-[11px] font-bold flex items-center justify-center ring-1 ring-slate-700"
+                                  style={{ backgroundColor: c.color }}
+                                >
+                                  {c.fullName.charAt(0).toUpperCase()}
+                                </div>
+                                <div className="text-xs font-semibold text-white flex items-center gap-1">
+                                  <span>{c.fullName}</span>
+                                  {isSelf && <span className="text-slate-400 font-normal">(You)</span>}
+                                </div>
+                              </div>
+                              <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
+                                Member
+                              </span>
+                            </div>
+                          );
+                        });
+                      })()}
+                    </div>
+                  </div>
                 </div>
               </div>
             )}
