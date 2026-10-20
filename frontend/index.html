@@ -1479,7 +1479,14 @@
       currentUser = { id: newUser.id, fullName, email, username };
       StorageService.set("cs_active_user", currentUser);
       showToast(`Welcome to CollabSpace, ${fullName}!`);
-      navigateTo("dashboard");
+      const pendingRoomReg = localStorage.getItem("cs_pending_room");
+      if (pendingRoomReg) {
+        localStorage.removeItem("cs_pending_room");
+        ensureRoomExistsLocally(pendingRoomReg);
+        openRoomInEditor(pendingRoomReg);
+      } else {
+        navigateTo("dashboard");
+      }
     });
 
     formLogin.addEventListener("submit", async (e) => {
@@ -1497,7 +1504,14 @@
       currentUser = { id: found.id, fullName: found.fullName, email: found.email, username: found.username };
       if (document.getElementById("loginRemember").checked) StorageService.set("cs_active_user", currentUser);
       showToast(`Signed in as ${found.fullName}`);
-      navigateTo("dashboard");
+      const pendingRoomLog = localStorage.getItem("cs_pending_room");
+      if (pendingRoomLog) {
+        localStorage.removeItem("cs_pending_room");
+        ensureRoomExistsLocally(pendingRoomLog);
+        openRoomInEditor(pendingRoomLog);
+      } else {
+        navigateTo("dashboard");
+      }
     });
 
     formReset.addEventListener("submit", async (e) => {
@@ -1672,38 +1686,62 @@
       openRoomInEditor(roomId);
     });
 
+    function ensureRoomExistsLocally(roomId, fallbackName) {
+      const cleanRoomId = roomId.trim().toUpperCase();
+      const rooms = getRoomsDB();
+      const docs = getDocsDB();
+      if (!rooms[cleanRoomId]) {
+        rooms[cleanRoomId] = {
+          id: cleanRoomId,
+          name: fallbackName || `Workspace ${cleanRoomId}`,
+          description: "Real-Time Collaborative Workspace",
+          access: "open",
+          ownerId: "remote-host",
+          ownerName: "Host",
+          authorizedMembers: currentUser ? [currentUser.id] : [],
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+        saveRoomsDB(rooms);
+      }
+      if (!docs[cleanRoomId]) {
+        docs[cleanRoomId] = {
+          roomId: cleanRoomId,
+          title: fallbackName || `Workspace ${cleanRoomId}`,
+          contentHtml: "<h1>" + cleanRoomId + "</h1><p>Connecting to shared workspace...</p>",
+          crdtVersion: 1,
+          updatedAt: new Date().toISOString()
+        };
+        saveDocsDB(docs);
+      }
+      return { room: rooms[cleanRoomId], doc: docs[cleanRoomId] };
+    }
+
     document.getElementById("formJoinRoom").addEventListener("submit", (e) => {
       e.preventDefault();
       const raw = document.getElementById("inputJoinRoomId").value.trim();
       const errBox = document.getElementById("joinRoomErrorBox");
       errBox.classList.add("hidden");
 
-      let extractedId = raw;
-      if (raw.includes("room=")) {
-        extractedId = decodeURIComponent(raw.split("room=").pop().split("&")[0]);
-      } else if (raw.includes("/")) {
-        extractedId = raw.split("/").pop();
-      }
-      extractedId = extractedId.toUpperCase().trim();
-
-      if (!/^CS-\d{6}$/.test(extractedId)) {
-        errBox.textContent = "Invalid Room ID format. Expected format: CS-XXXXXX (e.g., CS-482910) or a valid invitation URL.";
+      if (!raw) {
+        errBox.textContent = "Please enter a Room ID or paste an invite link.";
         errBox.classList.remove("hidden");
         return;
       }
 
-      const rooms = getRoomsDB();
-      if (!rooms[extractedId]) {
-        errBox.textContent = `Room ${extractedId} was not found on this device. Create it first or join from a synced browser tab.`;
+      // Extract Room ID (handles: CS-123456, CS-ABCDEF, ?room=CS-521929, /room/CS-521929, or full URL)
+      const match = raw.match(/CS-[A-Z0-9]{4,12}/i);
+      if (!match) {
+        errBox.textContent = "Invalid format. Expected format: CS-XXXXXX (e.g., CS-521929) or a valid invitation URL.";
         errBox.classList.remove("hidden");
         return;
       }
 
-      if (!rooms[extractedId].authorizedMembers.includes(currentUser.id)) {
-        rooms[extractedId].authorizedMembers.push(currentUser.id);
-        rooms[extractedId].updatedAt = new Date().toISOString();
-        saveRoomsDB(rooms);
-      }
+      const extractedId = match[0].toUpperCase();
+      ensureRoomExistsLocally(extractedId);
+
+      const modal = document.getElementById("modalJoinRoom");
+      if (modal) modal.classList.add("hidden");
 
       openRoomInEditor(extractedId);
     });
@@ -1889,19 +1927,13 @@
     }
 
     function openRoomInEditor(roomId) {
-      const rooms = getRoomsDB();
-      const docs = getDocsDB();
-      const room = rooms[roomId];
-      const doc = docs[roomId];
-      if (!room || !doc) {
-        showToast("Room could not be loaded.");
-        return;
-      }
+      const cleanRoomId = roomId.trim().toUpperCase();
+      const { room, doc } = ensureRoomExistsLocally(cleanRoomId);
 
-      currentRoomId = roomId;
+      currentRoomId = cleanRoomId;
       crdtVersion = doc.crdtVersion || 1;
       editorDocTitle.value = doc.title || room.name;
-      document.getElementById("editorRoomIdDisplay").textContent = roomId;
+      document.getElementById("editorRoomIdDisplay").textContent = cleanRoomId;
 
       const isOwner = room.ownerId === currentUser.id;
       const isReadOnly = !isOwner && room.access === "readonly";
@@ -3118,7 +3150,35 @@
         saveUsersDB(users);
       }
 
+      // Check for invitation link in URL (?room=CS-XXXXXX or /#room=CS-XXXXXX)
+      const urlParams = new URLSearchParams(window.location.search);
+      const roomFromUrl = urlParams.get("room") || (window.location.hash.includes("room=") ? window.location.hash.split("room=")[1].split("&")[0] : null);
+      if (roomFromUrl) {
+        const match = roomFromUrl.match(/CS-[A-Z0-9]{4,12}/i);
+        if (match) {
+          const targetRoom = match[0].toUpperCase();
+          if (currentUser) {
+            ensureRoomExistsLocally(targetRoom);
+            openRoomInEditor(targetRoom);
+            return;
+          } else {
+            localStorage.setItem("cs_pending_room", targetRoom);
+            showAuthFeedback(`Please sign in or create an account to join room ${targetRoom}`, false);
+            navigateTo("auth");
+            return;
+          }
+        }
+      }
+
       if (currentUser) {
+        const pending = localStorage.getItem("cs_pending_room");
+        if (pending) {
+          localStorage.removeItem("cs_pending_room");
+          ensureRoomExistsLocally(pending);
+          openRoomInEditor(pending);
+          return;
+        }
+
         const rooms = getRoomsDB();
         const roomIds = Object.keys(rooms);
         if (roomIds.length > 0) {
