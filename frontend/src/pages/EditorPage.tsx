@@ -313,7 +313,9 @@ const EditorPage: React.FC = () => {
 
                     <div className="space-y-1.5">
                       {(() => {
-                        const members = collaborators.filter(c => c.role !== 'Host');
+                        const host = collaborators.find(c => c.role === 'Host') || collaborators[0];
+                        const isViewerHost = (host && host.userId === user?.id) || ((user as any)?.role === 'Host');
+                        const members = collaborators.filter(c => c !== host);
                         if (members.length === 0) {
                           return (
                             <div className="p-2.5 rounded-xl border border-dashed border-slate-800 text-center text-slate-500 text-xs">
@@ -322,7 +324,7 @@ const EditorPage: React.FC = () => {
                           );
                         }
                         return members.map((c) => {
-                          const isSelf = c.userId === user?.id;
+                          const isSelf = !isViewerHost && c.userId === user?.id;
                           return (
                             <div
                               key={c.userId}

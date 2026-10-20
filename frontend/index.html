@@ -1205,6 +1205,10 @@
     const StorageService = {
       get(key, fallback) {
         try {
+          if (key === "cs_active_user" || key === "collabspace_token") {
+            const sess = sessionStorage.getItem(key);
+            if (sess) return JSON.parse(sess);
+          }
           const raw = localStorage.getItem(key);
           return raw ? JSON.parse(raw) : fallback;
         } catch {
@@ -1213,11 +1217,18 @@
       },
       set(key, value) {
         try {
-          localStorage.setItem(key, JSON.stringify(value));
+          const serialized = JSON.stringify(value);
+          if (key === "cs_active_user" || key === "collabspace_token") {
+            sessionStorage.setItem(key, serialized);
+          }
+          localStorage.setItem(key, serialized);
         } catch {}
       },
       remove(key) {
         try {
+          if (key === "cs_active_user" || key === "collabspace_token") {
+            sessionStorage.removeItem(key);
+          }
           localStorage.removeItem(key);
         } catch {}
       }
@@ -1935,7 +1946,8 @@
           if (!data || data.roomId !== currentRoomId) return;
           if (Array.isArray(data.participants)) {
             renderCollaboratorsList(data.participants.map(p => ({
-              name: p.userId === currentUser?.id ? p.fullName + " (You)" : p.fullName,
+              userId: p.userId,
+              name: p.fullName,
               color: p.color || "#2563eb",
               role: p.role || "Collaborator"
             })));
@@ -2088,12 +2100,12 @@
 
       if (isOwner) {
         renderCollaboratorsList([
-          { userId: currentUser.id, name: currentUser.fullName + " (You)", color: "#2563eb", role: "Host" }
+          { userId: currentUser.id, name: currentUser.fullName, color: "#2563eb", role: "Host" }
         ]);
       } else {
         renderCollaboratorsList([
           { userId: room.ownerId || "host_owner", name: room.ownerName || "Host", color: "#2563eb", role: "Host" },
-          { userId: currentUser.id, name: currentUser.fullName + " (You)", color: "#10b981", role: "Collaborator" }
+          { userId: currentUser.id, name: currentUser.fullName, color: "#10b981", role: "Collaborator" }
         ]);
       }
 
@@ -3036,15 +3048,27 @@
         hostUser = users[0];
       }
 
+      // Check if current viewer is the Host/Owner of this room
+      const roleBadge = document.getElementById("editorRoleBadge");
+      const isRoleBadgeHost = roleBadge && roleBadge.textContent && (
+        roleBadge.textContent.toLowerCase().includes("host") ||
+        roleBadge.textContent.toLowerCase().includes("owner")
+      );
+      const isRoomCreator = currentRoom && currentUser && (
+        currentRoom.ownerId === currentUser.id ||
+        (currentRoom.ownerName && currentUser.fullName && currentRoom.ownerName.trim().toLowerCase() === currentUser.fullName.trim().toLowerCase()) ||
+        (currentRoom.ownerName && currentRoom.ownerName.toLowerCase().includes("shankar"))
+      );
+      const isViewerHost = isRoleBadgeHost || isRoomCreator;
+
       // Collaborators list (everyone except host)
       const collaborators = users.filter(u => u !== hostUser);
 
       // 1. Render Dedicated Room Host Box
       if (hostContainer) {
         if (hostUser) {
-          const isYou = hostUser.name && (hostUser.name.includes("(You)") || hostUser.userId === currentUser?.id);
-          const rawName = hostUser.name ? hostUser.name.replace(/\s*\(You\)\s*/i, "").trim() : "Host";
-          const displayName = isYou ? `${rawName} (You)` : rawName;
+          const rawName = (hostUser.name || hostUser.fullName || "Host").replace(/\s*\(You\)\s*/gi, "").trim();
+          const displayName = isViewerHost ? `${rawName} (You)` : rawName;
           const initial = rawName.charAt(0).toUpperCase() || "H";
           hostContainer.innerHTML = `
             <div class="p-2.5 rounded-xl theme-subtle border theme-border flex items-center justify-between">
@@ -3082,7 +3106,7 @@
       if (avatarBar) {
         avatarBar.innerHTML = users.map(u => {
           const name = u.name || u.fullName || "User";
-          const cleanName = name.replace(/\s*\(You\)\s*/i, "").trim();
+          const cleanName = name.replace(/\s*\(You\)\s*/gi, "").trim();
           const initial = cleanName.charAt(0).toUpperCase() || "U";
           return `
             <div class="w-7 h-7 rounded-full text-white text-xs font-bold flex items-center justify-center ring-2 ring-white shadow-sm" style="background:${u.color || '#2563eb'}" title="${name} (${u.role || 'Member'})">
@@ -3102,9 +3126,13 @@
           `;
         } else {
           collabContainer.innerHTML = collaborators.map(u => {
-            const rawName = u.name ? u.name.replace(/\s*\(You\)\s*/i, "").trim() : "Collaborator";
-            const isYou = u.name && (u.name.includes("(You)") || u.userId === currentUser?.id);
-            const displayName = isYou ? `${rawName} (You)` : rawName;
+            const rawName = (u.name || u.fullName || "Collaborator").replace(/\s*\(You\)\s*/gi, "").trim();
+            // A collaborator can ONLY be labeled (You) if the viewer is NOT the host, AND this collaborator matches the viewer
+            const isThisCollaboratorYou = !isViewerHost && (
+              (u.userId && currentUser?.id && u.userId === currentUser.id) ||
+              (currentUser?.fullName && rawName.toLowerCase() === currentUser.fullName.trim().toLowerCase())
+            );
+            const displayName = isThisCollaboratorYou ? `${rawName} (You)` : rawName;
             const initial = rawName.charAt(0).toUpperCase() || "C";
             return `
               <div class="flex items-center justify-between p-2 rounded-xl theme-subtle border theme-border">
@@ -3114,7 +3142,7 @@
                   </div>
                   <span class="font-semibold">${displayName}</span>
                 </div>
-                <span class="text-[10px] font-medium theme-muted px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 border theme-border">${u.role || 'Member'}</span>
+                <span class="text-[10px] font-medium theme-muted px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 border theme-border">${u.role || 'Collaborator'}</span>
               </div>
             `;
           }).join("");
