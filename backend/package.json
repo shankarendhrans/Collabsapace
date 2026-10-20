@@ -7,7 +7,7 @@
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js",
-    "test": "node --loader ts-node/esm src/tests/collabspace.test.ts"
+    "test": "tsx src/tests/collabspace.test.ts"
   },
   "dependencies": {
     "@types/bcryptjs": "^2.4.6",

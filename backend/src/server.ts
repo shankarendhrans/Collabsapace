@@ -56,6 +56,19 @@ app.use("/api/auth", authRoutes);
 app.use("/api/rooms", roomRoutes);
 app.use("/api/documents", documentRoutes);
 
+app.get("/", (req, res) => {
+  res.json({
+    status: "ok",
+    service: "CollabSpace Backend",
+    version: "1.0.0",
+    timestamp: new Date().toISOString()
+  });
+});
+
+app.get("/health", (req, res) => {
+  res.json({ status: "healthy" });
+});
+
 setupCollabSocket(io);
 
 const PORT = Number(process.env.PORT) || 5000;

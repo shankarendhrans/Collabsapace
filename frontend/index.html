@@ -1761,43 +1761,70 @@
     let suppressEditorBroadcast = false;
     let connectionState = "Connected";
 
+    function updateConnectionUI(state) {
+      connectionState = state;
+      const btn = document.getElementById("btnCycleConnection");
+      const dot = document.getElementById("connStatusDot");
+      const lbl = document.getElementById("connStatusLabel");
+      if (lbl) lbl.textContent = state;
+      if (btn && dot) {
+        if (state === "Connected") {
+          btn.className = "px-2.5 py-1 rounded-full text-xs font-semibold border flex items-center gap-1.5 bg-emerald-50 text-emerald-700 border-emerald-200 cursor-pointer";
+          dot.className = "w-2 h-2 rounded-full bg-emerald-500 animate-pulse";
+        } else if (state === "Reconnecting") {
+          btn.className = "px-2.5 py-1 rounded-full text-xs font-semibold border flex items-center gap-1.5 bg-amber-50 text-amber-700 border-amber-200 cursor-pointer";
+          dot.className = "w-2 h-2 rounded-full bg-amber-500 animate-ping";
+        } else {
+          btn.className = "px-2.5 py-1 rounded-full text-xs font-semibold border flex items-center gap-1.5 bg-red-50 text-red-700 border-red-200 cursor-pointer";
+          dot.className = "w-2 h-2 rounded-full bg-red-500";
+        }
+      }
+    }
+
     let collabChannel = null;
     let realtimeSocket = null;
+    const injectedUrl = "%VITE_SOCKET_URL%";
     const socketBaseUrl = (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")
       ? "http://localhost:5000"
-      : (localStorage.getItem("cs_backend_url") || "https://collabspace-backend.onrender.com");
+      : (localStorage.getItem("cs_backend_url") || (!injectedUrl.startsWith("%") ? injectedUrl : "") || "https://collabsapace-backend.onrender.com");
 
     try {
       if (typeof io !== "undefined") {
         realtimeSocket = io(socketBaseUrl, {
           transports: ["websocket", "polling"],
-          reconnectionAttempts: 20,
+          reconnectionAttempts: 30,
           reconnectionDelay: 1000
         });
 
         realtimeSocket.on("connect", () => {
-          connectionState = "Connected";
-          const connBadge = document.getElementById("editorConnBadge");
-          if (connBadge) connBadge.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span><span>Connected</span>`;
-          if (currentRoomId) {
+          updateConnectionUI("Connected");
+          if (currentRoomId && currentUser) {
+            const rooms = getRoomsDB();
+            const currentRoom = rooms[currentRoomId];
+            const isOwner = currentRoom && currentRoom.ownerId === currentUser.id;
             realtimeSocket.emit("join-room", {
               roomId: currentRoomId,
-              user: currentUser,
+              user: {
+                ...currentUser,
+                role: isOwner ? "Host" : "Collaborator"
+              },
               token: currentUser?.token
             });
           }
         });
 
         realtimeSocket.on("reconnect_attempt", () => {
-          connectionState = "Reconnecting";
-          const connBadge = document.getElementById("editorConnBadge");
-          if (connBadge) connBadge.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"></span><span>Reconnecting...</span>`;
+          updateConnectionUI("Reconnecting");
         });
 
-        realtimeSocket.on("disconnect", () => {
-          connectionState = "Offline";
-          const connBadge = document.getElementById("editorConnBadge");
-          if (connBadge) connBadge.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-red-400"></span><span>Offline</span>`;
+        realtimeSocket.on("connect_error", (err) => {
+          console.warn("[Socket.IO] Connection error to " + socketBaseUrl + ":", err.message);
+          updateConnectionUI("Offline");
+        });
+
+        realtimeSocket.on("disconnect", (reason) => {
+          console.warn("[Socket.IO] Disconnected:", reason);
+          updateConnectionUI("Offline");
         });
 
         // 1. Authoritative Deduplicated Participant List
@@ -1961,12 +1988,20 @@
       ]);
 
       // Connect to Real-time Room over Socket.IO
+      const userPayload = {
+        ...currentUser,
+        role: isOwner ? "Host" : "Collaborator"
+      };
+
       if (realtimeSocket && realtimeSocket.connected) {
         realtimeSocket.emit("join-room", {
           roomId: currentRoomId,
-          user: currentUser,
+          user: userPayload,
           token: currentUser?.token
         });
+      } else if (realtimeSocket && !realtimeSocket.connected) {
+        updateConnectionUI("Reconnecting");
+        realtimeSocket.connect();
       }
 
       renderAnnotations();
@@ -2976,25 +3011,21 @@
       showToast("Added teaching margin note.");
     });
 
-    // Connection State Cycle
+    // Connection State Cycle & Server Config
     document.getElementById("btnCycleConnection").addEventListener("click", () => {
-      const states = ["Connected", "Reconnecting", "Offline"];
-      connectionState = states[(states.indexOf(connectionState) + 1) % states.length];
-      const btn = document.getElementById("btnCycleConnection");
-      const dot = document.getElementById("connStatusDot");
-      const lbl = document.getElementById("connStatusLabel");
-      lbl.textContent = connectionState;
-
-      if (connectionState === "Connected") {
-        btn.className = "px-2.5 py-1 rounded-full text-xs font-semibold border flex items-center gap-1.5 bg-emerald-50 text-emerald-700 border-emerald-200";
-        dot.className = "w-2 h-2 rounded-full bg-emerald-500";
-        persistCurrentDocAndBroadcast();
-      } else if (connectionState === "Reconnecting") {
-        btn.className = "px-2.5 py-1 rounded-full text-xs font-semibold border flex items-center gap-1.5 bg-amber-50 text-amber-700 border-amber-200";
-        dot.className = "w-2 h-2 rounded-full bg-amber-500 animate-ping";
+      if (connectionState === "Offline" || connectionState === "Reconnecting") {
+        showToast("Reconnecting to " + socketBaseUrl + "...");
+        updateConnectionUI("Reconnecting");
+        if (realtimeSocket) {
+          realtimeSocket.connect();
+        }
       } else {
-        btn.className = "px-2.5 py-1 rounded-full text-xs font-semibold border flex items-center gap-1.5 bg-red-50 text-red-700 border-red-200";
-        dot.className = "w-2 h-2 rounded-full bg-red-500";
+        const currentUrl = localStorage.getItem("cs_backend_url") || socketBaseUrl;
+        const promptVal = prompt("Backend Server URL (Active & Synced):\nIf your Render backend URL is different, enter it below:", currentUrl);
+        if (promptVal && promptVal.trim() && promptVal.trim() !== currentUrl) {
+          localStorage.setItem("cs_backend_url", promptVal.trim());
+          location.reload();
+        }
       }
     });
 
