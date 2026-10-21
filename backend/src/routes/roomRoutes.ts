@@ -1,5 +1,6 @@
 import { Router, Response } from "express";
 import crypto from "crypto";
+import mongoose from "mongoose";
 import { RoomModel } from "../models/Room";
 import { DocumentModel } from "../models/Document";
 import { requireAuth, optionalAuth, AuthRequest } from "../middleware/auth";
@@ -93,6 +94,38 @@ async function handleJoinRoom(identifier: string, req: AuthRequest, res: Respons
 router.post("/create", requireAuth, handleCreateRoom);
 router.post("/", requireAuth, handleCreateRoom);
 
+// Clear all rooms the current user joined as a collaborator/viewer
+router.post("/clear-joined", requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.user!.userId;
+    let userObjId: mongoose.Types.ObjectId | null = null;
+    try {
+      userObjId = new mongoose.Types.ObjectId(userId);
+    } catch {}
+
+    const userIds: any[] = userObjId ? [userObjId, userId] : [userId];
+
+    // Remove user from authorizedMembers in all rooms they do NOT own
+    const result = await RoomModel.updateMany(
+      {
+        ownerId: { $nin: userIds },
+        "authorizedMembers.userId": { $in: userIds }
+      },
+      {
+        $pull: { authorizedMembers: { userId: { $in: userIds } } }
+      }
+    );
+
+    res.json({
+      success: true,
+      message: "Successfully cleared all joined rooms.",
+      clearedCount: result.modifiedCount
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to clear joined rooms." });
+  }
+});
+
 router.post("/join", requireAuth, async (req: AuthRequest, res: Response) => {
   await handleJoinRoom(req.body.roomIdentifier, req, res);
 });
@@ -101,16 +134,86 @@ router.post("/:roomId/join", requireAuth, async (req: AuthRequest, res: Response
   await handleJoinRoom(req.params.roomId, req, res);
 });
 
+// Leave a specific room the user joined
+router.post("/:roomId/leave", requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const { roomId } = req.params;
+    const cleanRoomId = roomId.trim().toUpperCase();
+    const userId = req.user!.userId;
+    let userObjId: mongoose.Types.ObjectId | null = null;
+    try {
+      userObjId = new mongoose.Types.ObjectId(userId);
+    } catch {}
+
+    const userIds: any[] = userObjId ? [userObjId, userId] : [userId];
+
+    const room = await RoomModel.findOne({ roomId: cleanRoomId });
+    if (!room) {
+      res.status(404).json({ error: "Room not found." });
+      return;
+    }
+
+    if (room.ownerId.toString() === userId) {
+      res.status(400).json({ error: "Room owners cannot leave their own room. You can delete it instead." });
+      return;
+    }
+
+    await RoomModel.updateOne(
+      { roomId: cleanRoomId },
+      { $pull: { authorizedMembers: { userId: { $in: userIds } } } }
+    );
+
+    res.json({ success: true, message: `Successfully left room ${cleanRoomId}.` });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to leave room." });
+  }
+});
+
+// Delete an owned room
+router.delete("/:roomId", requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const { roomId } = req.params;
+    const cleanRoomId = roomId.trim().toUpperCase();
+    const userId = req.user!.userId;
+
+    const room = await RoomModel.findOne({ roomId: cleanRoomId });
+    if (!room) {
+      res.status(404).json({ error: "Room not found." });
+      return;
+    }
+
+    if (room.ownerId.toString() !== userId) {
+      res.status(403).json({ error: "Only the room owner can delete this room." });
+      return;
+    }
+
+    await RoomModel.deleteOne({ roomId: cleanRoomId });
+    await DocumentModel.deleteOne({ roomId: cleanRoomId });
+
+    res.json({ success: true, message: `Room ${cleanRoomId} deleted successfully.` });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to delete room." });
+  }
+});
+
 router.get("/recent", requireAuth, async (req: AuthRequest, res: Response) => {
   try {
-    const rooms = await RoomModel.find({
-      $or: [
-        { ownerId: req.user!.userId },
-        { "authorizedMembers.userId": req.user!.userId }
-      ]
-    })
+    const userId = req.user!.userId;
+    let userObjId: mongoose.Types.ObjectId | null = null;
+    try {
+      userObjId = new mongoose.Types.ObjectId(userId);
+    } catch {}
+
+    const matchConditions: any[] = [{ ownerId: userId }];
+    if (userObjId) {
+      matchConditions.push({ ownerId: userObjId });
+      matchConditions.push({ "authorizedMembers.userId": userObjId });
+    }
+    matchConditions.push({ "authorizedMembers.userId": userId });
+
+    const rooms = await RoomModel.find({ $or: matchConditions })
       .sort({ updatedAt: -1 })
-      .limit(16);
+      .limit(30);
     res.json({ rooms });
   } catch (err) {
     res.status(500).json({ error: "Unable to load recent rooms." });

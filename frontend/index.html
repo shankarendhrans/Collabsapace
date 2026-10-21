@@ -557,7 +557,17 @@
             <h2 class="text-lg font-bold">Recently Accessed Rooms</h2>
             <p class="text-xs theme-muted">Reopen your persistent rooms or copy their invitation links</p>
           </div>
-          <span id="recentRoomsCount" class="text-xs font-mono px-2.5 py-1 rounded-lg theme-subtle border theme-border">0 Rooms</span>
+          <div class="flex items-center gap-2">
+            <button id="btnClearJoinedRooms" type="button" class="text-xs px-3 py-1.5 rounded-lg border border-red-500/40 bg-red-500/10 hover:bg-red-500/20 text-red-400 hover:text-red-300 font-semibold transition flex items-center gap-1.5 cursor-pointer shadow-sm shadow-red-950/20" title="Leave and clear all rooms you have joined as a collaborator">
+              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 6h18"></path>
+                <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path>
+                <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path>
+              </svg>
+              <span id="btnClearJoinedText">Clear Joined Rooms</span>
+            </button>
+            <span id="recentRoomsCount" class="text-xs font-mono px-2.5 py-1 rounded-lg theme-subtle border theme-border">0 Rooms</span>
+          </div>
         </div>
 
         <div id="recentRoomsGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"></div>
@@ -1729,6 +1739,23 @@
       const roomsMap = getRoomsDB();
       const docsMap = getDocsDB();
       const roomList = Object.values(roomsMap).sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+      const myId = currentUser ? (currentUser.id || currentUser.userId || currentUser._id) : null;
+      const joinedCount = roomList.filter(r => !myId || r.ownerId !== myId).length;
+
+      const btnClearJoined = document.getElementById("btnClearJoinedRooms");
+      const btnClearText = document.getElementById("btnClearJoinedText");
+      if (btnClearJoined) {
+        btnClearJoined.style.display = "inline-flex";
+        if (joinedCount > 0) {
+          btnClearJoined.style.opacity = "1";
+          btnClearJoined.style.pointerEvents = "auto";
+          if (btnClearText) btnClearText.textContent = `Clear Joined Rooms (${joinedCount})`;
+        } else {
+          btnClearJoined.style.opacity = "0.45";
+          btnClearJoined.style.pointerEvents = "none";
+          if (btnClearText) btnClearText.textContent = "Clear Joined Rooms";
+        }
+      }
 
       document.getElementById("recentRoomsCount").textContent = `${roomList.length} Room${roomList.length === 1 ? "" : "s"}`;
       const grid = document.getElementById("recentRoomsGrid");
@@ -1752,9 +1779,12 @@
             <div class="space-y-1.5">
               <div class="flex items-center justify-between gap-2">
                 <span class="font-mono text-xs font-bold px-2.5 py-0.5 rounded-md theme-subtle border theme-border">${r.roomId}</span>
-                <span class="text-[11px] font-semibold px-2 py-0.5 rounded-full ${isOwner ? 'bg-blue-100 text-blue-800' : 'bg-emerald-100 text-emerald-800'}">
-                  ${isOwner ? 'Owner' : (r.access === 'readonly' ? 'Read-Only' : 'Collaborator')}
-                </span>
+                <div class="flex items-center gap-1.5">
+                  <span class="text-[11px] font-semibold px-2 py-0.5 rounded-full ${isOwner ? 'bg-blue-100 text-blue-800' : 'bg-emerald-100 text-emerald-800'}">
+                    ${isOwner ? 'Owner' : (r.access === 'readonly' ? 'Read-Only' : 'Collaborator')}
+                  </span>
+                  ${!isOwner ? `<button type="button" data-leave-room="${r.roomId}" class="text-[11px] px-2 py-0.5 rounded-full border border-red-200 dark:border-red-900/40 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 font-medium transition" title="Leave this room">Leave</button>` : ''}
+                </div>
               </div>
               <h3 class="font-bold text-base truncate">${doc.title || r.name}</h3>
               <p class="text-xs theme-muted line-clamp-2">${r.description || 'Collaborative document & file projection workspace'}</p>
@@ -1782,6 +1812,56 @@
           const rid = btn.getAttribute("data-copy-room");
           copyToClipboard(getInviteUrl(rid), `Copied invite link for ${rid}`);
         });
+      });
+      grid.querySelectorAll("[data-leave-room]").forEach(btn => {
+        btn.addEventListener("click", () => {
+          const rid = btn.getAttribute("data-leave-room");
+          if (confirm(`Leave room ${rid}? It will be removed from your dashboard.`)) {
+            const rooms = getRoomsDB();
+            delete rooms[rid];
+            saveRoomsDB(rooms);
+            renderDashboard();
+            showToast(`Left room ${rid}`);
+          }
+        });
+      });
+    }
+
+    const btnClearJoinedElement = document.getElementById("btnClearJoinedRooms");
+    if (btnClearJoinedElement) {
+      btnClearJoinedElement.addEventListener("click", async () => {
+        const rooms = getRoomsDB();
+        const myId = currentUser ? (currentUser.id || currentUser.userId || currentUser._id) : null;
+        let count = 0;
+        Object.keys(rooms).forEach(rid => {
+          const isMine = myId && rooms[rid].ownerId === myId;
+          if (!isMine) {
+            delete rooms[rid];
+            count++;
+          }
+        });
+
+        // Also sync clearing with backend MongoDB if logged in
+        const token = StorageService.get("collabspace_token", null);
+        if (token) {
+          try {
+            await fetch(socketBaseUrl + "/api/rooms/clear-joined", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${token}`
+              }
+            });
+          } catch {}
+        }
+
+        saveRoomsDB(rooms);
+        renderDashboard();
+        if (count > 0) {
+          showToast(`Cleared ${count} joined room${count === 1 ? "" : "s"} from dashboard`);
+        } else {
+          showToast("All joined rooms cleared.");
+        }
       });
     }
 

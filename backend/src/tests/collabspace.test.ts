@@ -58,7 +58,7 @@ async function runRealtimeIntegrationTests() {
     });
     await wait(150);
 
-    assert(clientAPresenceList.length === 1, "Client A should see 1 participant");
+    assert.strictEqual(clientAPresenceList.length, 1, "Client A should see 1 participant");
     console.log("  ✓ Host Alice joined room and sees self in participant list");
 
     // Client B joins as Participant 1
@@ -73,8 +73,8 @@ async function runRealtimeIntegrationTests() {
     });
     await wait(200);
 
-    assert(clientAPresenceList.length === 2, "Client A should now see 2 participants");
-    assert(clientBPresenceList.length === 2, "Client B should also see 2 participants");
+    assert.strictEqual(clientAPresenceList.length, 2, "Client A should now see 2 participants");
+    assert.strictEqual(clientBPresenceList.length, 2, "Client B should also see 2 participants");
     console.log("  ✓ Bob joined: Both Alice (Host) and Bob see exactly 2 participants");
 
     // Client C joins as Participant 2
@@ -89,9 +89,9 @@ async function runRealtimeIntegrationTests() {
     });
     await wait(200);
 
-    assert(clientAPresenceList.length === 3, "Client A should see 3 participants");
-    assert(clientBPresenceList.length === 3, "Client B should see 3 participants");
-    assert(clientCPresenceList.length === 3, "Client C should see 3 participants");
+    assert.strictEqual(clientAPresenceList.length, 3, "Client A should see 3 participants");
+    assert.strictEqual(clientBPresenceList.length, 3, "Client B should see 3 participants");
+    assert.strictEqual(clientCPresenceList.length, 3, "Client C should see 3 participants");
     console.log("  ✓ Charlie joined: All 3 clients see identical participant list (Alice, Bob, Charlie)");
     console.log("  [PASS] TEST A — PARTICIPANT VISIBILITY\n");
 
