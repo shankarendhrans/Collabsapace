@@ -1729,7 +1729,80 @@
       return `${base}?room=${encodeURIComponent(roomId)}`;
     }
 
-    function renderDashboard() {
+    function isUserInRoom(r) {
+      if (!currentUser || !r) return false;
+      const myId = String(currentUser.id || currentUser.userId || currentUser._id || "").trim();
+      if (!myId) return false;
+      const rOwner = String(r.ownerId || "").trim();
+      if (rOwner && rOwner === myId) return true;
+      const members = Array.isArray(r.authorizedMembers) ? r.authorizedMembers : [];
+      return members.some(m => {
+        const mid = typeof m === "object" && m !== null ? (m.userId || m.id || m._id) : m;
+        return String(mid || "").trim() === myId;
+      });
+    }
+
+    let isSyncingRecentRooms = false;
+    async function syncRecentRoomsFromBackend() {
+      if (isSyncingRecentRooms || !currentUser) return;
+      const token = (currentUser && currentUser.token) || localStorage.getItem("collabspace_token");
+      if (!token) return;
+      isSyncingRecentRooms = true;
+      try {
+        const resp = await fetch(socketBaseUrl + "/api/rooms/recent", {
+          headers: {
+            "Authorization": `Bearer ${token}`
+          }
+        });
+        if (resp.ok) {
+          const data = await resp.json();
+          if (data && Array.isArray(data.rooms)) {
+            const rooms = getRoomsDB();
+            let changed = false;
+            const myId = String(currentUser.id || currentUser.userId || currentUser._id || "").trim();
+
+            data.rooms.forEach(br => {
+              const rid = br.roomId;
+              const backendOwnerId = typeof br.ownerId === "object" && br.ownerId !== null ? String(br.ownerId._id || br.ownerId) : String(br.ownerId || "");
+              if (!rooms[rid]) {
+                rooms[rid] = {
+                  roomId: rid,
+                  id: rid,
+                  name: br.name,
+                  description: br.description || "",
+                  ownerId: backendOwnerId,
+                  ownerName: br.ownerName || (backendOwnerId === myId ? currentUser.fullName : "Host"),
+                  authorizedMembers: br.authorizedMembers || [],
+                  access: br.accessSettings?.defaultRole || "edit",
+                  createdAt: br.createdAt || new Date().toISOString(),
+                  updatedAt: br.updatedAt || new Date().toISOString()
+                };
+                changed = true;
+              } else {
+                if (backendOwnerId === myId && rooms[rid].ownerId !== myId) {
+                  rooms[rid].ownerId = myId;
+                  changed = true;
+                }
+              }
+            });
+
+            if (changed) {
+              saveRoomsDB(rooms);
+              const dashPage = document.getElementById("pageDashboard");
+              if (dashPage && !dashPage.classList.contains("hidden")) {
+                renderDashboard(true);
+              }
+            }
+          }
+        }
+      } catch (e) {
+        // Silent network fallback
+      } finally {
+        isSyncingRecentRooms = false;
+      }
+    }
+
+    function renderDashboard(skipBackendSync = false) {
       if (!currentUser) return;
       document.getElementById("welcomeUserName").textContent = currentUser.fullName;
       document.getElementById("dashUserName").textContent = currentUser.fullName;
@@ -1738,9 +1811,14 @@
 
       const roomsMap = getRoomsDB();
       const docsMap = getDocsDB();
-      const roomList = Object.values(roomsMap).sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
-      const myId = currentUser ? (currentUser.id || currentUser.userId || currentUser._id) : null;
-      const joinedCount = roomList.filter(r => !myId || r.ownerId !== myId).length;
+      const myId = currentUser ? String(currentUser.id || currentUser.userId || currentUser._id || "").trim() : "";
+
+      // Only show rooms that belong to this user (either as owner or as joined member)
+      const roomList = Object.values(roomsMap)
+        .filter(isUserInRoom)
+        .sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
+
+      const joinedCount = roomList.filter(r => String(r.ownerId || "").trim() !== myId).length;
 
       const btnClearJoined = document.getElementById("btnClearJoinedRooms");
       const btnClearText = document.getElementById("btnClearJoinedText");
@@ -1767,13 +1845,16 @@
             <p class="text-xs theme-muted">Use the "Create a Collaborative Room" card above or launch a sample room to start editing.</p>
           </div>
         `;
+        if (!skipBackendSync) {
+          syncRecentRoomsFromBackend();
+        }
         return;
       }
 
       grid.innerHTML = roomList.map(r => {
         const doc = docsMap[r.roomId] || {};
         const lastEdited = new Date(doc.updatedAt || r.updatedAt).toLocaleString();
-        const isOwner = r.ownerId === currentUser.id;
+        const isOwner = myId && String(r.ownerId || "").trim() === myId;
         return `
           <div class="theme-surface border theme-border rounded-2xl p-5 shadow-sm hover:shadow-md transition flex flex-col justify-between space-y-4">
             <div class="space-y-1.5">
@@ -1814,35 +1895,75 @@
         });
       });
       grid.querySelectorAll("[data-leave-room]").forEach(btn => {
-        btn.addEventListener("click", () => {
+        btn.addEventListener("click", async () => {
           const rid = btn.getAttribute("data-leave-room");
+          if (!rid) return;
           if (confirm(`Leave room ${rid}? It will be removed from your dashboard.`)) {
             const rooms = getRoomsDB();
-            delete rooms[rid];
-            saveRoomsDB(rooms);
-            renderDashboard();
+            const r = rooms[rid];
+            if (r) {
+              if (Array.isArray(r.authorizedMembers)) {
+                r.authorizedMembers = r.authorizedMembers.filter(m => {
+                  const mid = typeof m === "object" && m !== null ? (m.userId || m.id || m._id) : m;
+                  return String(mid || "").trim() !== myId;
+                });
+              }
+              if (!r.authorizedMembers || r.authorizedMembers.length === 0) {
+                delete rooms[rid];
+              }
+              saveRoomsDB(rooms);
+            }
+
+            const token = (currentUser && currentUser.token) || localStorage.getItem("collabspace_token");
+            if (token) {
+              try {
+                await fetch(`${socketBaseUrl}/api/rooms/${rid}/leave`, {
+                  method: "POST",
+                  headers: {
+                    "Content-Type": "application/json",
+                    "Authorization": `Bearer ${token}`
+                  }
+                });
+              } catch {}
+            }
+
+            renderDashboard(true);
             showToast(`Left room ${rid}`);
           }
         });
       });
+
+      if (!skipBackendSync) {
+        syncRecentRoomsFromBackend();
+      }
     }
 
     const btnClearJoinedElement = document.getElementById("btnClearJoinedRooms");
     if (btnClearJoinedElement) {
       btnClearJoinedElement.addEventListener("click", async () => {
         const rooms = getRoomsDB();
-        const myId = currentUser ? (currentUser.id || currentUser.userId || currentUser._id) : null;
+        const myId = currentUser ? String(currentUser.id || currentUser.userId || currentUser._id || "").trim() : "";
         let count = 0;
         Object.keys(rooms).forEach(rid => {
-          const isMine = myId && rooms[rid].ownerId === myId;
-          if (!isMine) {
-            delete rooms[rid];
+          const r = rooms[rid];
+          const isMine = myId && String(r.ownerId || "").trim() === myId;
+          const isMember = isUserInRoom(r);
+          if (isMember && !isMine) {
+            if (Array.isArray(r.authorizedMembers)) {
+              r.authorizedMembers = r.authorizedMembers.filter(m => {
+                const mid = typeof m === "object" && m !== null ? (m.userId || m.id || m._id) : m;
+                return String(mid || "").trim() !== myId;
+              });
+            }
+            if (!r.authorizedMembers || r.authorizedMembers.length === 0) {
+              delete rooms[rid];
+            }
             count++;
           }
         });
 
         // Also sync clearing with backend MongoDB if logged in
-        const token = StorageService.get("collabspace_token", null);
+        const token = (currentUser && currentUser.token) || localStorage.getItem("collabspace_token");
         if (token) {
           try {
             await fetch(socketBaseUrl + "/api/rooms/clear-joined", {
@@ -1856,7 +1977,7 @@
         }
 
         saveRoomsDB(rooms);
-        renderDashboard();
+        renderDashboard(true);
         if (count > 0) {
           showToast(`Cleared ${count} joined room${count === 1 ? "" : "s"} from dashboard`);
         } else {
@@ -1959,6 +2080,8 @@
       const cleanRoomId = roomId.trim().toUpperCase();
       const rooms = getRoomsDB();
       const docs = getDocsDB();
+      const myId = currentUser ? String(currentUser.id || currentUser.userId || currentUser._id || "").trim() : "";
+
       if (!rooms[cleanRoomId]) {
         rooms[cleanRoomId] = {
           roomId: cleanRoomId,
@@ -1968,12 +2091,26 @@
           access: "open",
           ownerId: "remote-host",
           ownerName: "Host",
-          authorizedMembers: currentUser ? [currentUser.id] : [],
+          authorizedMembers: myId ? [myId] : [],
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()
         };
         saveRoomsDB(rooms);
+      } else if (myId) {
+        if (!Array.isArray(rooms[cleanRoomId].authorizedMembers)) {
+          rooms[cleanRoomId].authorizedMembers = [];
+        }
+        const alreadyIn = rooms[cleanRoomId].authorizedMembers.some(m => {
+          const mid = typeof m === "object" && m !== null ? (m.userId || m.id || m._id) : m;
+          return String(mid || "").trim() === myId;
+        });
+        const isOwner = String(rooms[cleanRoomId].ownerId || "").trim() === myId;
+        if (!alreadyIn && !isOwner) {
+          rooms[cleanRoomId].authorizedMembers.push(myId);
+          saveRoomsDB(rooms);
+        }
       }
+
       if (!docs[cleanRoomId]) {
         docs[cleanRoomId] = {
           roomId: cleanRoomId,
@@ -2081,8 +2218,13 @@
     });
 
     document.getElementById("btnDashLogout").addEventListener("click", () => {
+      if (realtimeSocket && currentRoomId) {
+        try { realtimeSocket.emit("leave-room", { roomId: currentRoomId }); } catch {}
+      }
       currentUser = null;
       StorageService.remove("cs_active_user");
+      StorageService.remove("collabspace_token");
+      sessionStorage.removeItem("cs_active_room");
       showToast("Logged out safely.");
       navigateTo("auth");
     });

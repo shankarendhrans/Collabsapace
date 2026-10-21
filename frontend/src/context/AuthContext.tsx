@@ -64,6 +64,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const logout = () => {
     localStorage.removeItem('collabspace_token');
+    localStorage.removeItem('cs_active_user');
+    sessionStorage.removeItem('cs_active_room');
     setToken(null);
     setUser(null);
   };
