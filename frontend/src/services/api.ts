@@ -1,7 +1,10 @@
 import axios from 'axios';
 
 const isLocal = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
-const API_BASE_URL = import.meta.env.VITE_API_URL || (isLocal ? 'http://localhost:5000/api' : 'https://collabsapace-backend.onrender.com/api');
+const rawApiUrl = (import.meta.env.VITE_API_URL || '').trim();
+const API_BASE_URL = (rawApiUrl && !rawApiUrl.includes('your-backend-app') && !rawApiUrl.includes('%') && rawApiUrl.startsWith('http'))
+  ? rawApiUrl
+  : (isLocal ? 'http://localhost:5000/api' : 'https://collabsapace-backend.onrender.com/api');
 
 export const api = axios.create({
   baseURL: API_BASE_URL,

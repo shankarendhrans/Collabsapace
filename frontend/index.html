@@ -1896,6 +1896,18 @@
 
       saveRoomsDB(rooms);
       saveDocsDB(docs);
+
+      if (currentUser?.token) {
+        fetch(`${socketBaseUrl}/api/rooms`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${currentUser.token}`
+          },
+          body: JSON.stringify({ name, description })
+        }).catch(() => {});
+      }
+
       return roomId;
     }
 
@@ -2105,16 +2117,29 @@
 
     let collabChannel = null;
     let realtimeSocket = null;
+    const OFFICIAL_RENDER_BACKEND = "https://collabsapace-backend.onrender.com";
     const injectedUrl = "%VITE_SOCKET_URL%";
     let storedBackendUrl = localStorage.getItem("cs_backend_url");
     const isLocalHost = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
-    if (!isLocalHost && storedBackendUrl && (storedBackendUrl.includes("localhost") || storedBackendUrl.includes("127.0.0.1"))) {
+
+    // Auto-purge any invalid, broken, or dummy placeholder URLs from localStorage
+    if (storedBackendUrl && (
+      storedBackendUrl.includes("your-backend-app") ||
+      storedBackendUrl.includes("your-backend") ||
+      storedBackendUrl.includes("example.com") ||
+      !storedBackendUrl.startsWith("http") ||
+      (!isLocalHost && (storedBackendUrl.includes("localhost") || storedBackendUrl.includes("127.0.0.1")))
+    )) {
+      console.warn("[CollabSpace] Purging invalid stored backend URL:", storedBackendUrl);
       localStorage.removeItem("cs_backend_url");
       storedBackendUrl = null;
     }
+
+    const cleanInjected = (injectedUrl && !injectedUrl.startsWith("%") && !injectedUrl.includes("your-backend-app") && !injectedUrl.includes("example.com") && injectedUrl.startsWith("http")) ? injectedUrl.trim() : "";
+
     const socketBaseUrl = isLocalHost
       ? "http://localhost:5000"
-      : (storedBackendUrl || (!injectedUrl.startsWith("%") ? injectedUrl : "") || "https://collabsapace-backend.onrender.com");
+      : (storedBackendUrl || cleanInjected || OFFICIAL_RENDER_BACKEND);
 
     function sendSocketJoinRoom() {
       if (!realtimeSocket || !currentRoomId || !currentUser) return;
@@ -2151,9 +2176,12 @@
     try {
       if (typeof io !== "undefined") {
         realtimeSocket = io(socketBaseUrl, {
-          transports: ["websocket", "polling"],
-          reconnectionAttempts: 30,
-          reconnectionDelay: 1000
+          transports: ["polling", "websocket"],
+          reconnection: true,
+          reconnectionAttempts: Infinity,
+          reconnectionDelay: 1000,
+          reconnectionDelayMax: 5000,
+          timeout: 20000
         });
 
         realtimeSocket.on("connect", () => {
@@ -2163,18 +2191,31 @@
           }
         });
 
-        realtimeSocket.on("reconnect_attempt", () => {
+        realtimeSocket.on("reconnect_attempt", (attempt) => {
           updateConnectionUI("Reconnecting");
+          if (attempt % 5 === 0) {
+            fetch(socketBaseUrl + "/health", { mode: "cors" }).catch(() => {});
+          }
         });
 
         realtimeSocket.on("connect_error", (err) => {
           console.warn("[Socket.IO] Connection error to " + socketBaseUrl + ":", err.message);
-          updateConnectionUI("Offline");
+          updateConnectionUI("Reconnecting");
+          // If connection failed and stored URL was bad, auto-heal to official Render backend
+          if (storedBackendUrl && storedBackendUrl !== OFFICIAL_RENDER_BACKEND) {
+            localStorage.removeItem("cs_backend_url");
+            location.reload();
+          } else {
+            fetch(socketBaseUrl + "/health", { mode: "cors" }).catch(() => {});
+          }
         });
 
         realtimeSocket.on("disconnect", (reason) => {
           console.warn("[Socket.IO] Disconnected:", reason);
-          updateConnectionUI("Offline");
+          if (reason === "io server disconnect") {
+            realtimeSocket.connect();
+          }
+          updateConnectionUI("Reconnecting");
         });
 
         // 1. Authoritative Deduplicated Participant List
@@ -3555,19 +3596,24 @@
 
     // Connection State Cycle & Server Config
     document.getElementById("btnCycleConnection").addEventListener("click", () => {
-      if (connectionState === "Offline" || connectionState === "Reconnecting") {
-        showToast("Reconnecting to " + socketBaseUrl + "...");
-        updateConnectionUI("Reconnecting");
-        if (realtimeSocket) {
-          realtimeSocket.connect();
+      const currentUrl = localStorage.getItem("cs_backend_url") || socketBaseUrl;
+      const promptVal = prompt(
+        "CollabSpace Real-Time Server Configuration:\n\n" +
+        "Official Live Backend Server:\n" + OFFICIAL_RENDER_BACKEND + "\n\n" +
+        "To reset to the official server, leave this empty and click OK.\n" +
+        "Or enter a custom server URL:",
+        (currentUrl && currentUrl !== OFFICIAL_RENDER_BACKEND && !currentUrl.includes("your-backend-app")) ? currentUrl : ""
+      );
+      if (promptVal !== null) {
+        const trimmed = promptVal.trim();
+        if (!trimmed || trimmed === OFFICIAL_RENDER_BACKEND || trimmed.includes("your-backend-app") || trimmed.includes("example.com")) {
+          localStorage.removeItem("cs_backend_url");
+          showToast("Reset to official server: " + OFFICIAL_RENDER_BACKEND);
+        } else {
+          localStorage.setItem("cs_backend_url", trimmed);
+          showToast("Server set to: " + trimmed);
         }
-      } else {
-        const currentUrl = localStorage.getItem("cs_backend_url") || socketBaseUrl;
-        const promptVal = prompt("Backend Server URL (Active & Synced):\nIf your Render backend URL is different, enter it below:", currentUrl);
-        if (promptVal && promptVal.trim() && promptVal.trim() !== currentUrl) {
-          localStorage.setItem("cs_backend_url", promptVal.trim());
-          location.reload();
-        }
+        location.reload();
       }
     });
 

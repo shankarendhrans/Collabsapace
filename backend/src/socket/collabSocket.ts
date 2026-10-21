@@ -231,13 +231,18 @@ export function setupCollabSocket(io: Server): void {
 
           if (mongoose.connection.readyState === 1) {
             try {
+              const isValidObjId = mongoose.Types.ObjectId.isValid(userId) && userId.length === 24;
+              const ownerObjId = isValidObjId ? new mongoose.Types.ObjectId(userId) : new mongoose.Types.ObjectId("000000000000000000000001");
               RoomModel.findOneAndUpdate(
                 { roomId: cleanRoomId },
                 {
                   roomId: cleanRoomId,
                   name: payload.roomTitle || "Untitled Room",
-                  ownerId: userId.startsWith("anon-") ? undefined : userId,
-                  ownerName: fullName
+                  ownerId: ownerObjId,
+                  $setOnInsert: {
+                    authorizedMembers: [{ userId: ownerObjId, role: "owner", joinedAt: new Date() }],
+                    accessSettings: { allowLinkJoin: true, defaultRole: "editor" }
+                  }
                 },
                 { upsert: true }
               ).catch(() => {});
