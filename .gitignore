@@ -22,3 +22,9 @@ npm-debug.log*
 Thumbs.db
 .idea/
 .vscode/
+
+# Uploaded files
+uploads/*
+!uploads/.gitkeep
+backend/uploads/*
+!backend/uploads/.gitkeep

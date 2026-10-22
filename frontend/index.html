@@ -1849,10 +1849,68 @@
     function getInviteUrl(roomId) {
       const isLocalHost = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
       if (isLocalHost) {
-        return `https://collabsapace.vercel.app/?room=${encodeURIComponent(roomId)}`;
+        return `${window.location.origin}/?room=${encodeURIComponent(roomId)}`;
       }
       const base = window.location.href.split("?")[0].split("#")[0];
       return `${base}?room=${encodeURIComponent(roomId)}`;
+    }
+
+    // Caret & Selection Preservation for Collaborative Rich-Text Editing
+    function saveSelection(containerEl) {
+      try {
+        const sel = window.getSelection();
+        if (!sel || sel.rangeCount === 0) return null;
+        const range = sel.getRangeAt(0);
+        if (!containerEl.contains(range.startContainer)) return null;
+        const preRange = range.cloneRange();
+        preRange.selectNodeContents(containerEl);
+        preRange.setEnd(range.startContainer, range.startOffset);
+        const start = preRange.toString().length;
+        return {
+          start: start,
+          end: start + range.toString().length
+        };
+      } catch {
+        return null;
+      }
+    }
+
+    function restoreSelection(containerEl, savedSel) {
+      if (!savedSel) return;
+      try {
+        const sel = window.getSelection();
+        if (!sel) return;
+        let charIndex = 0;
+        const range = document.createRange();
+        range.setStart(containerEl, 0);
+        range.collapse(true);
+        const nodeStack = [containerEl];
+        let node;
+        let foundStart = false;
+        let stop = false;
+
+        while (!stop && (node = nodeStack.pop())) {
+          if (node.nodeType === Node.TEXT_NODE) {
+            const nextCharIndex = charIndex + node.length;
+            if (!foundStart && savedSel.start >= charIndex && savedSel.start <= nextCharIndex) {
+              range.setStart(node, Math.min(savedSel.start - charIndex, node.length));
+              foundStart = true;
+            }
+            if (foundStart && savedSel.end >= charIndex && savedSel.end <= nextCharIndex) {
+              range.setEnd(node, Math.min(savedSel.end - charIndex, node.length));
+              stop = true;
+            }
+            charIndex = nextCharIndex;
+          } else {
+            let i = node.childNodes.length;
+            while (i--) {
+              nodeStack.push(node.childNodes[i]);
+            }
+          }
+        }
+        sel.removeAllRanges();
+        sel.addRange(range);
+      } catch {}
     }
 
     function isUserInRoom(r) {
@@ -2363,6 +2421,11 @@
                 rooms[cleanRoomId].ownerId = data.room.ownerId;
                 roomUpdated = true;
               }
+              const remoteAccess = (data.room.access === "readonly" || data.room.accessSettings?.defaultRole === "viewer") ? "readonly" : (data.room.access || "open");
+              if (rooms[cleanRoomId].access !== remoteAccess) {
+                rooms[cleanRoomId].access = remoteAccess;
+                roomUpdated = true;
+              }
             }
             if (data.document && docs[cleanRoomId]) {
               if (data.document.title) {
@@ -2374,11 +2437,29 @@
                 docUpdated = true;
               }
             }
+            if (Array.isArray(data.projectedFiles) && docs[cleanRoomId]) {
+              docs[cleanRoomId].projectedFiles = data.projectedFiles;
+              if (data.latestProjectedFile && !docs[cleanRoomId].projectedFile) {
+                docs[cleanRoomId].projectedFile = data.latestProjectedFile;
+              }
+              docUpdated = true;
+            }
 
             if (roomUpdated) saveRoomsDB(rooms);
             if (docUpdated) saveDocsDB(docs);
 
             if (currentRoomId === cleanRoomId) {
+              const isOwner = isPersonCurrentUser({ userId: rooms[cleanRoomId]?.ownerId }) || (currentUser && rooms[cleanRoomId]?.ownerId === currentUser.id);
+              const isReadOnly = !isOwner && rooms[cleanRoomId]?.access === "readonly";
+              applyReadOnlyState(isReadOnly);
+
+              if (docs[cleanRoomId]?.projectedFiles) {
+                renderUploadedFilesList(docs[cleanRoomId].projectedFiles);
+              }
+              if (docs[cleanRoomId]?.projectedFile) {
+                renderProjectedFileFromRecord(docs[cleanRoomId].projectedFile, false);
+              }
+
               if (docs[cleanRoomId]?.title) editorDocTitle.value = docs[cleanRoomId].title;
               if (docs[cleanRoomId]?.contentHtml && richTextEditor.innerHTML.includes("Connecting to shared workspace...")) {
                 suppressEditorBroadcast = true;
@@ -2521,9 +2602,10 @@
 
     const cleanInjected = (injectedUrl && !injectedUrl.startsWith("%") && !injectedUrl.includes("your-backend-app") && !injectedUrl.includes("example.com") && injectedUrl.startsWith("http")) ? injectedUrl.trim() : "";
 
+    const localBackendUrl = `${window.location.protocol}//${window.location.hostname}:5000`;
     const socketBaseUrl = (storedBackendUrl && storedBackendUrl.startsWith("http"))
       ? storedBackendUrl
-      : (cleanInjected || OFFICIAL_RENDER_BACKEND);
+      : (isLocalHost ? localBackendUrl : (cleanInjected || OFFICIAL_RENDER_BACKEND));
 
     function sendSocketJoinRoom() {
       if (!realtimeSocket || !currentRoomId || !currentUser) return;
@@ -2532,15 +2614,18 @@
       const currentRoom = rooms[cleanRoomId] || {};
       const docs = getDocsDB();
       const currentDoc = docs[cleanRoomId] || {};
-      const isOwner = currentRoom.ownerId === currentUser.id;
+      const isOwner = isPersonCurrentUser({ userId: currentRoom.ownerId }) || currentRoom.ownerId === currentUser.id;
+      const isReadOnly = !isOwner && currentRoom.access === "readonly";
 
       const payload = {
         roomId: cleanRoomId,
         roomTitle: currentDoc.title || currentRoom.name || ("Workspace " + cleanRoomId),
         contentHtml: currentDoc.contentHtml || richTextEditor.innerHTML,
+        access: currentRoom.access || (isReadOnly ? "readonly" : "open"),
+        isReadOnly: isReadOnly,
         user: {
           ...currentUser,
-          role: isOwner ? "Host" : "Collaborator"
+          role: isOwner ? "Host" : (isReadOnly ? "Viewer" : "Collaborator")
         },
         token: currentUser?.token
       };
@@ -2678,9 +2763,13 @@
           const activeRoom = (currentRoomId || "").trim().toUpperCase();
           if (incomingRoom && activeRoom && incomingRoom !== activeRoom) return;
 
+          const isEditorFocused = document.activeElement === richTextEditor;
+          const savedCaret = isEditorFocused ? saveSelection(richTextEditor) : null;
+
           suppressEditorBroadcast = true;
           if (data.contentHtml) {
             richTextEditor.innerHTML = data.contentHtml;
+            if (savedCaret) restoreSelection(richTextEditor, savedCaret);
           }
           if (data.title) {
             editorDocTitle.value = data.title;
@@ -2688,6 +2777,16 @@
           crdtVersion = Math.max(crdtVersion, data.crdtVersion || 1);
           suppressEditorBroadcast = false;
           updateEditorCounters();
+
+          // Restore canvas sketches if present
+          if (data.sketches && typeof data.sketches === "object") {
+            for (const [canvasId, dataUrl] of Object.entries(data.sketches)) {
+              const canvas = document.getElementById(canvasId);
+              if (canvas && dataUrl) {
+                restoreDataUrlToCanvas(canvas, dataUrl);
+              }
+            }
+          }
 
           const rooms = getRoomsDB();
           if (rooms[currentRoomId]) {
@@ -2706,19 +2805,40 @@
             saveDocsDB(docs);
           }
 
-          const roleBadge = document.getElementById("editorRoleBadge");
-          if (roleBadge) {
-            const isOwner = data.isHost || data.role === "Host";
-            roleBadge.textContent = isOwner ? "Owner / Host" : "Collaborator";
-            roleBadge.className = isOwner
-              ? "text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-blue-100 text-blue-800"
-              : "text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800";
+          if (data.access === "readonly" || data.defaultRole === "viewer") {
+            const rooms = getRoomsDB();
+            if (rooms[currentRoomId]) {
+              rooms[currentRoomId].access = "readonly";
+              saveRoomsDB(rooms);
+            }
+          }
+
+          const isOwner = data.isHost || data.role === "Host";
+          const isReadOnly = !isOwner && (data.isReadOnly || data.role === "Viewer" || data.access === "readonly");
+          applyReadOnlyState(isReadOnly);
+
+          // Handle late-joining projected files
+          if (Array.isArray(data.projectedFiles) && data.projectedFiles.length > 0) {
+            const docs = getDocsDB();
+            if (docs[currentRoomId]) {
+              docs[currentRoomId].projectedFiles = data.projectedFiles;
+              saveDocsDB(docs);
+            }
+            renderUploadedFilesList(data.projectedFiles);
+          }
+          if (data.latestProjectedFile) {
+            const docs = getDocsDB();
+            if (docs[currentRoomId]) {
+              docs[currentRoomId].projectedFile = data.latestProjectedFile;
+              saveDocsDB(docs);
+            }
+            renderProjectedFileFromRecord(data.latestProjectedFile, false);
           }
 
           if (data.hostUser && activeRoomParticipants.length === 0) {
             activeRoomParticipants = [
               { userId: data.hostUser.userId, name: data.hostUser.fullName, color: data.hostUser.color || "#2563eb", role: "Host" },
-              ...(currentUser && currentUser.id !== data.hostUser.userId ? [{ userId: currentUser.id, name: currentUser.fullName, color: "#10b981", role: "Collaborator" }] : [])
+              ...(currentUser && currentUser.id !== data.hostUser.userId ? [{ userId: currentUser.id, name: currentUser.fullName, color: "#10b981", role: isReadOnly ? "Viewer" : "Collaborator" }] : [])
             ];
             renderCollaboratorsList(activeRoomParticipants);
           }
@@ -2731,15 +2851,29 @@
           const activeRoom = (currentRoomId || "").trim().toUpperCase();
           if (incomingRoom && activeRoom && incomingRoom !== activeRoom) return;
 
+          const isEditorFocused = document.activeElement === richTextEditor;
+          const savedCaret = isEditorFocused ? saveSelection(richTextEditor) : null;
+
           suppressEditorBroadcast = true;
           if (msg.contentHtml !== undefined && richTextEditor.innerHTML !== msg.contentHtml) {
             richTextEditor.innerHTML = msg.contentHtml;
+            if (savedCaret) restoreSelection(richTextEditor, savedCaret);
           }
           if (msg.title && editorDocTitle.value !== msg.title) {
             editorDocTitle.value = msg.title;
           }
           crdtVersion = Math.max(crdtVersion, msg.crdtVersion || 1);
           updateEditorCounters();
+
+          // Restore canvas sketches if sent
+          if (msg.sketches && typeof msg.sketches === "object") {
+            for (const [canvasId, dataUrl] of Object.entries(msg.sketches)) {
+              const canvas = document.getElementById(canvasId);
+              if (canvas && dataUrl) {
+                restoreDataUrlToCanvas(canvas, dataUrl);
+              }
+            }
+          }
 
           // Persist to local memory DB
           const docs = getDocsDB();
@@ -2762,12 +2896,33 @@
           const activeRoom = (currentRoomId || "").trim().toUpperCase();
           if (incomingRoom && activeRoom && incomingRoom !== activeRoom) return;
           if (data.fileRecord) {
+            const docs = getDocsDB();
+            if (docs[currentRoomId]) {
+              if (!Array.isArray(docs[currentRoomId].projectedFiles)) {
+                docs[currentRoomId].projectedFiles = [];
+              }
+              const idx = docs[currentRoomId].projectedFiles.findIndex(f => f.id === data.fileRecord.id || (f.fileId && f.fileId === data.fileRecord.fileId));
+              if (idx >= 0) {
+                docs[currentRoomId].projectedFiles[idx] = data.fileRecord;
+              } else {
+                docs[currentRoomId].projectedFiles.push(data.fileRecord);
+              }
+              docs[currentRoomId].projectedFile = data.fileRecord;
+              saveDocsDB(docs);
+              renderUploadedFilesList(docs[currentRoomId].projectedFiles);
+            }
             renderProjectedFileFromRecord(data.fileRecord, false);
-            showToast(`${data.user?.fullName || "Collaborator"} projected "${data.fileRecord.name}"`);
+            showToast(`${data.user?.fullName || "Collaborator"} uploaded & projected "${data.fileRecord.name}"`);
           }
         });
 
-        // 5. Canvas Sketch Sync
+        // Real-Time Permission Denied Feedback
+        realtimeSocket.on("permission-denied", (data) => {
+          showToast(data.error || "Permission denied in read-only mode.");
+          applyReadOnlyState(true);
+        });
+
+        // 5. Canvas Sketch Sync (Final stroke snapshot)
         realtimeSocket.on("sketch-update", (data) => {
           if (!data) return;
           const incomingRoom = (data.roomId || "").trim().toUpperCase();
@@ -2782,6 +2937,81 @@
               ctx.drawImage(img, 0, 0);
             };
             img.src = data.dataUrl;
+          }
+        });
+
+        // 5b. Real-Time Live Drawing Stroke Sync (continuous movement)
+        realtimeSocket.on("sketch-live-stroke", (data) => {
+          if (!data) return;
+          const incomingRoom = (data.roomId || "").trim().toUpperCase();
+          const activeRoom = (currentRoomId || "").trim().toUpperCase();
+          if (incomingRoom && activeRoom && incomingRoom !== activeRoom) return;
+          const c = document.getElementById(data.targetCanvasId);
+          if (!c) return;
+          const ctx = c.getContext("2d");
+          ctx.save();
+          ctx.lineCap = "round";
+          ctx.lineJoin = "round";
+          if (data.tool === "eraser") {
+            if (data.targetCanvasId === "whiteboardCanvas") {
+              ctx.globalCompositeOperation = "source-over";
+              ctx.strokeStyle = "#ffffff";
+              ctx.lineWidth = Math.max(16, (data.size || 4) * 4);
+            } else {
+              ctx.globalCompositeOperation = "destination-out";
+              ctx.lineWidth = Math.max(18, (data.size || 4) * 4);
+            }
+          } else if (data.tool === "marker") {
+            ctx.globalCompositeOperation = "source-over";
+            ctx.globalAlpha = 0.32;
+            ctx.strokeStyle = data.color || "#ef4444";
+            ctx.lineWidth = Math.max(14, (data.size || 4) * 3);
+          } else {
+            ctx.globalCompositeOperation = "source-over";
+            ctx.globalAlpha = 1.0;
+            ctx.strokeStyle = data.color || "#ef4444";
+            ctx.lineWidth = data.size || 4;
+          }
+
+          ctx.beginPath();
+          ctx.moveTo(data.fromX, data.fromY);
+          ctx.lineTo(data.toX, data.toY);
+          ctx.stroke();
+          ctx.restore();
+        });
+
+        // 5c. Real-Time Canvas Clear
+        realtimeSocket.on("sketch-clear", (data) => {
+          if (!data) return;
+          const incomingRoom = (data.roomId || "").trim().toUpperCase();
+          const activeRoom = (currentRoomId || "").trim().toUpperCase();
+          if (incomingRoom && activeRoom && incomingRoom !== activeRoom) return;
+          const targetIds = data.targetCanvasId
+            ? [data.targetCanvasId]
+            : ["projectorSketchCanvas", "notesOverlayCanvas", "whiteboardCanvas"];
+          targetIds.forEach(id => {
+            const c = document.getElementById(id);
+            if (c) {
+              const ctx = c.getContext("2d");
+              ctx.clearRect(0, 0, c.width, c.height);
+            }
+            if (canvasHistories[id]) canvasHistories[id] = [];
+          });
+        });
+
+        // 5d. Real-Time Canvas Undo
+        realtimeSocket.on("sketch-undo", (data) => {
+          if (!data) return;
+          const incomingRoom = (data.roomId || "").trim().toUpperCase();
+          const activeRoom = (currentRoomId || "").trim().toUpperCase();
+          if (incomingRoom && activeRoom && incomingRoom !== activeRoom) return;
+          const c = document.getElementById(data.targetCanvasId);
+          if (c) {
+            const ctx = c.getContext("2d");
+            ctx.clearRect(0, 0, c.width, c.height);
+            if (data.dataUrl) {
+              restoreDataUrlToCanvas(c, data.dataUrl);
+            }
           }
         });
 
@@ -2844,9 +3074,13 @@
           if (connectionState === "Offline") return;
 
           if (msg.type === "DOC_DELTA") {
+            const isEditorFocused = document.activeElement === richTextEditor;
+            const savedCaret = isEditorFocused ? saveSelection(richTextEditor) : null;
+
             suppressEditorBroadcast = true;
             if (richTextEditor.innerHTML !== msg.contentHtml) {
               richTextEditor.innerHTML = msg.contentHtml;
+              if (savedCaret) restoreSelection(richTextEditor, savedCaret);
             }
             if (msg.title && editorDocTitle.value !== msg.title) {
               editorDocTitle.value = msg.title;
@@ -2869,12 +3103,157 @@
               };
               img.src = msg.dataUrl;
             }
+          } else if (msg.type === "SKETCH_CLEAR") {
+            const ids = msg.targetCanvasId ? [msg.targetCanvasId] : ["projectorSketchCanvas", "notesOverlayCanvas", "whiteboardCanvas"];
+            ids.forEach(id => {
+              const c = document.getElementById(id);
+              if (c) {
+                const ctx = c.getContext("2d");
+                ctx.clearRect(0, 0, c.width, c.height);
+              }
+              if (canvasHistories[id]) canvasHistories[id] = [];
+            });
           }
         };
       }
     } catch (e) {
       console.warn("Realtime communication init warning:", e);
     }
+
+    let currentIsReadOnly = false;
+    function applyReadOnlyState(readOnly) {
+      const rooms = getRoomsDB();
+      const currentRoom = currentRoomId ? rooms[currentRoomId] : null;
+      const myId = String(currentUser?.id || currentUser?.userId || "").trim();
+      const ownerId = String(currentRoom?.ownerId || "").trim();
+      const isOwner = !!(myId && ownerId && myId === ownerId);
+
+      // If user is owner, they can never be set to read-only
+      currentIsReadOnly = isOwner ? false : !!readOnly;
+
+      richTextEditor.contentEditable = currentIsReadOnly ? "false" : "true";
+      editorDocTitle.disabled = currentIsReadOnly;
+
+      const roleBadge = document.getElementById("editorRoleBadge");
+      if (roleBadge) {
+        roleBadge.textContent = isOwner ? "Owner / Host" : (currentIsReadOnly ? "Read-Only" : "Collaborator");
+        roleBadge.className = isOwner
+          ? "text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-blue-100 text-blue-800"
+          : (currentIsReadOnly
+              ? "text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-300"
+              : "text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800");
+      }
+
+      // Read-Only Warning Banner above notes editor
+      let banner = document.getElementById("editorReadOnlyNoticeBanner");
+      if (!banner) {
+        banner = document.createElement("div");
+        banner.id = "editorReadOnlyNoticeBanner";
+        banner.className = "hidden p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-400 text-xs font-semibold flex items-center justify-between mb-2";
+        banner.innerHTML = `
+          <div class="flex items-center gap-2">
+            <span>🔒</span>
+            <span><strong>Read-Only Viewer Mode:</strong> Only the room host can edit, draw, or modify this workspace. You can read and select text while viewing live updates in real time.</span>
+          </div>
+          <span class="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-amber-500/20 font-bold">Viewer</span>
+        `;
+        const notesEditorPanel = document.getElementById("panelNotesEditor");
+        if (notesEditorPanel && notesEditorPanel.firstChild) {
+          notesEditorPanel.insertBefore(banner, notesEditorPanel.firstChild);
+        }
+      }
+
+      if (currentIsReadOnly) {
+        banner.classList.remove("hidden");
+      } else {
+        banner.classList.add("hidden");
+      }
+
+      // Disable/enable rich text formatting buttons
+      const formattingControls = document.querySelectorAll("#editorToolbar button, #editorToolbar select");
+      formattingControls.forEach(ctrl => {
+        ctrl.disabled = currentIsReadOnly;
+        ctrl.classList.toggle("opacity-40", currentIsReadOnly);
+        ctrl.classList.toggle("pointer-events-none", currentIsReadOnly);
+      });
+
+      // Disable cursor screen draw for read-only participants
+      const btnDrawOverlay = document.getElementById("btnToggleOverlaySketch");
+      if (btnDrawOverlay) {
+        btnDrawOverlay.disabled = currentIsReadOnly;
+        btnDrawOverlay.classList.toggle("opacity-50", currentIsReadOnly);
+        btnDrawOverlay.classList.toggle("pointer-events-none", currentIsReadOnly);
+      }
+      if (currentIsReadOnly && overlaySketchEnabled) {
+        setOverlaySketchActive(false);
+      }
+
+      const btnProjDraw = document.getElementById("btnProjectorDrawToggle");
+      if (btnProjDraw) {
+        btnProjDraw.disabled = currentIsReadOnly;
+        btnProjDraw.classList.toggle("opacity-50", currentIsReadOnly);
+        btnProjDraw.classList.toggle("pointer-events-none", currentIsReadOnly);
+      }
+
+      const btnCopyProj = document.getElementById("btnCopyProjectedToNotes");
+      if (btnCopyProj) {
+        btnCopyProj.disabled = currentIsReadOnly;
+        btnCopyProj.classList.toggle("opacity-50", currentIsReadOnly);
+        btnCopyProj.classList.toggle("pointer-events-none", currentIsReadOnly);
+      }
+
+      const btnUndo = document.getElementById("btnSketchUndo");
+      const btnClear = document.getElementById("btnSketchClear");
+      if (btnUndo) btnUndo.disabled = currentIsReadOnly;
+      if (btnClear) btnClear.disabled = currentIsReadOnly;
+
+      // Disable upload triggers for read-only viewers
+      [
+        document.getElementById("btnOpenImportModal"),
+        document.getElementById("btnSidebarUpload"),
+        document.getElementById("btnEmptyUploadTrigger")
+      ].forEach(btn => {
+        if (btn) {
+          btn.disabled = currentIsReadOnly;
+          btn.classList.toggle("opacity-50", currentIsReadOnly);
+          btn.classList.toggle("cursor-not-allowed", currentIsReadOnly);
+        }
+      });
+    }
+
+    // Input blockers for genuine read-only enforcement
+    richTextEditor.addEventListener("beforeinput", (e) => {
+      if (currentIsReadOnly) {
+        e.preventDefault();
+        showToast("Read-Only: You cannot modify this document.");
+      }
+    });
+
+    richTextEditor.addEventListener("keydown", (e) => {
+      if (currentIsReadOnly) {
+        const isCopy = (e.ctrlKey || e.metaKey) && (e.key === "c" || e.key === "C");
+        const isNav = ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown", "Tab"].includes(e.key);
+        const isSelectAll = (e.ctrlKey || e.metaKey) && (e.key === "a" || e.key === "A");
+        if (!isCopy && !isNav && !isSelectAll) {
+          e.preventDefault();
+          showToast("Read-Only: Editing is restricted to the room host.");
+        }
+      }
+    });
+
+    richTextEditor.addEventListener("paste", (e) => {
+      if (currentIsReadOnly) {
+        e.preventDefault();
+        showToast("Read-Only: Pasting is disabled.");
+      }
+    });
+
+    richTextEditor.addEventListener("drop", (e) => {
+      if (currentIsReadOnly) {
+        e.preventDefault();
+        showToast("Read-Only: Modifying document is disabled.");
+      }
+    });
 
     function openRoomInEditor(roomId) {
       const cleanRoomId = roomId.trim().toUpperCase();
@@ -2895,21 +3274,17 @@
         userDisplay.textContent = currentUser ? currentUser.fullName : "Guest";
       }
 
-      const isOwner = room.ownerId === currentUser.id;
+      const isOwner = isPersonCurrentUser({ userId: room.ownerId }) || (currentUser && room.ownerId === currentUser.id);
       const isReadOnly = !isOwner && room.access === "readonly";
-      const roleBadge = document.getElementById("editorRoleBadge");
-      roleBadge.textContent = isOwner ? "Owner / Host" : (isReadOnly ? "Read-Only" : "Collaborator");
-      roleBadge.className = isOwner
-        ? "text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-blue-100 text-blue-800"
-        : (isReadOnly ? "text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-amber-100 text-amber-800" : "text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800");
-
-      richTextEditor.contentEditable = isReadOnly ? "false" : "true";
-      editorDocTitle.disabled = isReadOnly;
+      applyReadOnlyState(isReadOnly);
 
       suppressEditorBroadcast = true;
       richTextEditor.innerHTML = doc.contentHtml || "<p>Start typing here...</p>";
       suppressEditorBroadcast = false;
 
+      if (Array.isArray(doc.projectedFiles) && doc.projectedFiles.length > 0) {
+        renderUploadedFilesList(doc.projectedFiles);
+      }
       if (doc.projectedFile) {
         renderProjectedFileFromRecord(doc.projectedFile, false);
       } else {
@@ -3059,14 +3434,26 @@
     const importErrorBox = document.getElementById("importErrorBox");
 
     document.getElementById("btnOpenImportModal").addEventListener("click", () => {
+      if (currentIsReadOnly) {
+        showToast("Read-Only: Only the room host can upload reference files.");
+        return;
+      }
       importErrorBox.classList.add("hidden");
       modalImport.classList.remove("hidden");
     });
     document.getElementById("btnSidebarUpload").addEventListener("click", () => {
+      if (currentIsReadOnly) {
+        showToast("Read-Only: Only the room host can upload reference files.");
+        return;
+      }
       importErrorBox.classList.add("hidden");
       modalImport.classList.remove("hidden");
     });
     document.getElementById("btnEmptyUploadTrigger").addEventListener("click", () => {
+      if (currentIsReadOnly) {
+        showToast("Read-Only: Only the room host can upload reference files.");
+        return;
+      }
       importErrorBox.classList.add("hidden");
       modalImport.classList.remove("hidden");
     });
@@ -3083,6 +3470,75 @@
       document.getElementById("uploadedFilesSidebarList").innerHTML = `<div class="text-slate-400 italic">No reference file projected yet.</div>`;
     }
 
+    function resolveFileUrl(url) {
+      if (!url) return "";
+      if (url.startsWith("http://") || url.startsWith("https://") || url.startsWith("data:")) return url;
+      return `${socketBaseUrl}${url.startsWith("/") ? "" : "/"}${url}`;
+    }
+
+    function renderUploadedFilesList(files) {
+      const container = document.getElementById("uploadedFilesSidebarList");
+      const badge = document.getElementById("projectorFileBadge");
+      if (!container) return;
+
+      if (!Array.isArray(files) || files.length === 0) {
+        container.innerHTML = `<div class="text-slate-400 italic">No reference file projected yet.</div>`;
+        if (badge) badge.classList.add("hidden");
+        return;
+      }
+
+      if (badge) {
+        badge.textContent = String(files.length);
+        badge.classList.remove("hidden");
+      }
+
+      const docs = getDocsDB();
+      const currentProj = docs[currentRoomId]?.projectedFile;
+      const activeId = currentProj ? (currentProj.id || currentProj.fileId || currentProj.name) : "";
+
+      container.innerHTML = files.map((f, idx) => {
+        const isActive = activeId && (f.id === activeId || f.fileId === activeId || f.name === activeId);
+        const ext = (f.ext || "file").toUpperCase();
+        const extBg = ext === "PDF" ? "bg-red-500/20 text-red-500 border-red-500/30" :
+                      ext === "DOCX" || ext === "DOC" ? "bg-blue-500/20 text-blue-500 border-blue-500/30" :
+                      ["PNG", "JPG", "JPEG", "WEBP", "SVG"].includes(ext) ? "bg-purple-500/20 text-purple-500 border-purple-500/30" :
+                      "bg-emerald-500/20 text-emerald-500 border-emerald-500/30";
+
+        return `
+          <div class="p-2.5 rounded-xl border transition ${isActive ? 'bg-indigo-500/15 border-indigo-500/50 shadow-sm' : 'theme-subtle border theme-border hover:border-indigo-400/40'} flex items-center justify-between gap-2" data-file-idx="${idx}">
+            <div class="truncate flex items-center gap-2">
+              <span class="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold border ${extBg}">${ext}</span>
+              <div class="truncate">
+                <div class="font-bold text-xs truncate ${isActive ? 'text-indigo-400' : ''}" title="${f.name}">${f.name}</div>
+                <div class="text-[10px] theme-muted">${f.uploadedBy ? ('By ' + f.uploadedBy) : 'Reference File'} ${isActive ? '• Active' : ''}</div>
+              </div>
+            </div>
+            <div class="flex items-center gap-1 shrink-0">
+              <button type="button" class="btn-view-projected-file px-2 py-1 rounded-lg ${isActive ? 'bg-indigo-600 text-white' : 'bg-slate-200 dark:bg-slate-800 hover:bg-indigo-600 hover:text-white'} text-[10px] font-bold transition" data-file-idx="${idx}">
+                ${isActive ? 'Viewing' : 'View'}
+              </button>
+              ${f.url ? `<a href="${resolveFileUrl(f.url)}" download="${f.name}" target="_blank" class="p-1 rounded-lg hover:bg-slate-300 dark:hover:bg-slate-700 text-slate-400 hover:text-slate-200" title="Download Original">↓</a>` : ''}
+            </div>
+          </div>
+        `;
+      }).join("");
+
+      container.querySelectorAll(".btn-view-projected-file").forEach(btn => {
+        btn.addEventListener("click", () => {
+          const idx = parseInt(btn.getAttribute("data-file-idx"), 10);
+          if (!isNaN(idx) && files[idx]) {
+            const chosen = files[idx];
+            if (docs[currentRoomId]) {
+              docs[currentRoomId].projectedFile = chosen;
+              saveDocsDB(docs);
+            }
+            renderProjectedFileFromRecord(chosen, true);
+            renderUploadedFilesList(files);
+          }
+        });
+      });
+    }
+
     function renderProjectedFileFromRecord(record, switchView = true) {
       const emptyState = document.getElementById("projectorEmptyState");
       const host = document.getElementById("projectedContentHost");
@@ -3093,23 +3549,24 @@
       document.getElementById("projectedFileTypeBadge").textContent = (record.ext || "FILE").toUpperCase();
       document.getElementById("projectorFileBadge").classList.remove("hidden");
 
-      host.innerHTML = record.projectedHtml;
-
-      document.getElementById("uploadedFilesSidebarList").innerHTML = `
-        <div class="p-2.5 rounded-xl bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800 flex items-center justify-between gap-2">
-          <div class="truncate">
-            <div class="font-bold text-indigo-950 dark:text-indigo-200 truncate">${record.name}</div>
-            <div class="text-[10px] text-indigo-600 dark:text-indigo-400">${record.ext.toUpperCase()} • Projected in Full Layout</div>
+      if (["png", "jpg", "jpeg", "svg", "webp", "gif"].includes((record.ext || "").toLowerCase()) && record.url) {
+        const fullImgUrl = resolveFileUrl(record.url);
+        host.innerHTML = `
+          <div class="projected-sheet p-6 text-center space-y-4">
+            <div class="flex items-center justify-between text-xs text-slate-500 border-b pb-2">
+              <span class="font-bold text-slate-700">${record.name}</span>
+              <a href="${fullImgUrl}" target="_blank" download class="px-2 py-1 rounded bg-indigo-600 text-white font-semibold text-[11px]">Download Image ↗</a>
+            </div>
+            <img src="${fullImgUrl}" alt="${record.name}" class="max-w-full h-auto mx-auto rounded-xl shadow-lg border border-slate-200" />
           </div>
-          <button type="button" id="btnSidebarFocusProjector" class="px-2 py-1 rounded-lg bg-indigo-600 text-white text-[10px] font-bold shrink-0">
-            View
-          </button>
-        </div>
-      `;
-      const viewBtn = document.getElementById("btnSidebarFocusProjector");
-      if (viewBtn) {
-        viewBtn.addEventListener("click", () => setWorkspaceMode("split"));
+        `;
+      } else {
+        host.innerHTML = record.projectedHtml;
       }
+
+      const docs = getDocsDB();
+      const files = docs[currentRoomId]?.projectedFiles || [record];
+      renderUploadedFilesList(files);
 
       if (switchView) {
         const selectedTarget = document.querySelector('input[name="uploadOpenTarget"]:checked')?.value || "split";
@@ -3122,9 +3579,29 @@
       if (!currentRoomId) return;
       const docs = getDocsDB();
       if (docs[currentRoomId]) {
+        if (!Array.isArray(docs[currentRoomId].projectedFiles)) {
+          docs[currentRoomId].projectedFiles = [];
+        }
+        const idx = docs[currentRoomId].projectedFiles.findIndex(f => f.id === record.id || (f.fileId && f.fileId === record.fileId));
+        if (idx >= 0) {
+          docs[currentRoomId].projectedFiles[idx] = record;
+        } else {
+          docs[currentRoomId].projectedFiles.push(record);
+        }
         docs[currentRoomId].projectedFile = record;
         saveDocsDB(docs);
+        renderUploadedFilesList(docs[currentRoomId].projectedFiles);
       }
+
+      // Live Socket.IO Broadcast to everyone in the room
+      if (realtimeSocket && realtimeSocket.connected) {
+        realtimeSocket.emit("project-file", {
+          roomId: currentRoomId,
+          fileRecord: record,
+          user: currentUser
+        });
+      }
+
       if (collabChannel && connectionState === "Connected") {
         try {
           collabChannel.postMessage({
@@ -3194,23 +3671,77 @@
 
     async function processImportedFile(file) {
       importErrorBox.classList.add("hidden");
-      const maxBytes = 20 * 1024 * 1024;
+      if (currentIsReadOnly) {
+        showToast("Read-Only: Only the room host can upload reference files.");
+        importErrorBox.textContent = "Permission denied. In Read-Only Viewer Mode, only the room host can upload files.";
+        importErrorBox.classList.remove("hidden");
+        return;
+      }
+
+      const maxBytes = 25 * 1024 * 1024;
       if (file.size > maxBytes) {
-        importErrorBox.textContent = "File exceeds the 20 MB limit.";
+        importErrorBox.textContent = "File exceeds the 25 MB limit.";
         importErrorBox.classList.remove("hidden");
         return;
       }
 
       const ext = (file.name.split(".").pop() || "").toLowerCase();
       try {
+        showToast(`Uploading "${file.name}" to shared room...`);
+
+        // Real Backend Upload via FormData
+        const formData = new FormData();
+        formData.append("file", file);
+        const token = localStorage.getItem("collabspace_token") || currentUser?.token;
+        const headers = {};
+        if (token) headers["Authorization"] = `Bearer ${token}`;
+        if (currentUser?.id || currentUser?.userId) headers["x-user-id"] = currentUser.id || currentUser.userId;
+
+        let serverRecord = null;
+        try {
+          const uploadResp = await fetch(`${socketBaseUrl}/api/documents/upload/${encodeURIComponent(currentRoomId)}`, {
+            method: "POST",
+            headers,
+            body: formData
+          });
+
+          if (uploadResp.ok) {
+            const uploadData = await uploadResp.json();
+            if (uploadData && uploadData.fileRecord) {
+              serverRecord = uploadData.fileRecord;
+            }
+          } else if (uploadResp.status === 403) {
+            const errData = await uploadResp.json().catch(() => ({}));
+            showToast(errData.error || "Permission denied. In read-only mode, only the host can upload.");
+            importErrorBox.textContent = errData.error || "Permission denied in read-only mode.";
+            importErrorBox.classList.remove("hidden");
+            return;
+          } else {
+            const errData = await uploadResp.json().catch(() => ({}));
+            console.warn("[CollabSpace] Backend upload response status:", uploadResp.status, errData);
+          }
+        } catch (netErr) {
+          console.warn("[CollabSpace] Network error during backend upload, proceeding with client parsing fallback:", netErr);
+        }
+
         let projectedHtml = "";
         let extractedTextHtml = "";
 
         if (ext === "pdf") {
-          showToast(`Rendering ${file.name} pages in high-resolution visual format...`);
-          const pdfResult = await renderPdfPagesToHtmlDataUrls(file);
-          projectedHtml = pdfResult.projectedHtml;
-          extractedTextHtml = pdfResult.extractedTextHtml;
+          showToast(`Rendering ${file.name} visual pages...`);
+          try {
+            const pdfResult = await renderPdfPagesToHtmlDataUrls(file);
+            projectedHtml = pdfResult.projectedHtml;
+            extractedTextHtml = pdfResult.extractedTextHtml;
+          } catch {
+            if (serverRecord?.projectedHtml) {
+              projectedHtml = serverRecord.projectedHtml;
+              extractedTextHtml = serverRecord.extractedTextHtml;
+            }
+          }
+        } else if (serverRecord?.projectedHtml) {
+          projectedHtml = serverRecord.projectedHtml;
+          extractedTextHtml = serverRecord.extractedTextHtml || "";
         } else if (ext === "docx" || ext === "doc") {
           if (window.mammoth) {
             const arrayBuffer = await file.arrayBuffer();
@@ -3229,13 +3760,14 @@
             r.onerror = reject;
             r.readAsDataURL(file);
           });
+          const imgUrl = serverRecord?.url ? resolveFileUrl(serverRecord.url) : dataUrl;
           projectedHtml = `
             <div class="projected-sheet p-6 text-center space-y-3">
               <div class="text-xs font-bold text-slate-500">${file.name} (Projected Visual Asset)</div>
-              <img src="${dataUrl}" alt="${file.name}" class="max-w-full h-auto mx-auto rounded-lg shadow" />
+              <img src="${imgUrl}" alt="${file.name}" class="max-w-full h-auto mx-auto rounded-lg shadow" />
             </div>
           `;
-          extractedTextHtml = `<p><img src="${dataUrl}" alt="${file.name}" /></p>`;
+          extractedTextHtml = `<p><img src="${imgUrl}" alt="${file.name}" /></p>`;
         } else if (ext === "html" || ext === "htm") {
           const rawHtml = await file.text();
           const bodyMatch = rawHtml.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
@@ -3248,27 +3780,31 @@
           extractedTextHtml = styled;
           projectedHtml = `<div class="projected-sheet p-8 sm:p-12">${styled}</div>`;
         } else {
-          // .txt, .rtf, or general text files — preserve exact line breaks, indentation & tables
           const txt = await file.text();
           const escaped = txt.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
           extractedTextHtml = `<pre style="white-space: pre-wrap; font-family: 'Inter', sans-serif; background: transparent; color: inherit; padding: 0;">${escaped}</pre>`;
           projectedHtml = `<div class="projected-sheet p-8 sm:p-12"><pre style="white-space: pre-wrap; font-family: 'Inter', sans-serif; font-size: 0.95rem; line-height: 1.75; color: #0f172a;">${escaped}</pre></div>`;
         }
 
-        const record = {
+        const finalRecord = {
+          id: serverRecord?.id || serverRecord?.fileId || ("file_" + Date.now()),
+          fileId: serverRecord?.fileId || serverRecord?.id,
           name: file.name,
           ext,
+          url: serverRecord?.url || "",
           projectedHtml,
           extractedTextHtml,
+          uploadedBy: currentUser ? currentUser.fullName : "Host",
           uploadedAt: new Date().toISOString()
         };
 
-        saveProjectedRecordToRoom(record);
-        renderProjectedFileFromRecord(record, true);
+        saveProjectedRecordToRoom(finalRecord);
+        renderProjectedFileFromRecord(finalRecord, true);
         modalImport.classList.add("hidden");
-        showToast(`Projected "${file.name}" with full visual formatting! Take notes alongside it.`);
+        showToast(`Projected "${file.name}"! Available to all participants in this room.`);
       } catch (err) {
-        importErrorBox.textContent = `Could not render ${file.name}. Ensure the file is valid and not password-protected.`;
+        console.error("[CollabSpace] File processing error:", err);
+        importErrorBox.textContent = `Could not render ${file.name}. Ensure the file is valid.`;
         importErrorBox.classList.remove("hidden");
       }
     }
@@ -3295,6 +3831,10 @@
 
     // Optional button: Copy projected file text into the Notes Editor if the user wants to edit its text directly
     document.getElementById("btnCopyProjectedToNotes").addEventListener("click", () => {
+      if (currentIsReadOnly) {
+        showToast("Read-Only: You cannot modify notes.");
+        return;
+      }
       const docs = getDocsDB();
       const proj = docs[currentRoomId]?.projectedFile;
       if (!proj) {
@@ -3568,7 +4108,13 @@
         };
       }
 
+      let prevPt = null;
+
       function startStroke(e) {
+        if (currentIsReadOnly) {
+          showToast("Read-Only: Drawing is disabled for viewers.");
+          return;
+        }
         if (canvasId !== "whiteboardCanvas" && !overlaySketchEnabled) return;
         e.preventDefault();
         lastActiveCanvasId = canvasId;
@@ -3576,6 +4122,7 @@
         const pt = getCoords(e);
         startX = pt.x;
         startY = pt.y;
+        prevPt = pt;
 
         // Save undo snapshot
         const hist = canvasHistories[canvasId];
@@ -3601,29 +4148,80 @@
           ctx.globalAlpha = 1.0;
           ctx.strokeStyle = currentSketchColor;
           ctx.lineWidth = currentSketchSize;
+          ctx.beginPath();
+          ctx.moveTo(prevPt ? prevPt.x : pt.x, prevPt ? prevPt.y : pt.y);
           ctx.lineTo(pt.x, pt.y);
           ctx.stroke();
+
+          // Stream live stroke segment over Socket.IO in real time
+          if (realtimeSocket && realtimeSocket.connected && currentRoomId && prevPt) {
+            realtimeSocket.emit("sketch-live-stroke", {
+              roomId: currentRoomId,
+              targetCanvasId: canvasId,
+              fromX: prevPt.x,
+              fromY: prevPt.y,
+              toX: pt.x,
+              toY: pt.y,
+              tool: "pen",
+              color: currentSketchColor,
+              size: currentSketchSize
+            });
+          }
+          prevPt = pt;
         } else if (currentSketchTool === "marker") {
           ctx.globalCompositeOperation = "source-over";
           ctx.globalAlpha = 0.32;
           ctx.strokeStyle = currentSketchColor;
           ctx.lineWidth = Math.max(14, currentSketchSize * 3);
+          ctx.beginPath();
+          ctx.moveTo(prevPt ? prevPt.x : pt.x, prevPt ? prevPt.y : pt.y);
           ctx.lineTo(pt.x, pt.y);
           ctx.stroke();
+
+          if (realtimeSocket && realtimeSocket.connected && currentRoomId && prevPt) {
+            realtimeSocket.emit("sketch-live-stroke", {
+              roomId: currentRoomId,
+              targetCanvasId: canvasId,
+              fromX: prevPt.x,
+              fromY: prevPt.y,
+              toX: pt.x,
+              toY: pt.y,
+              tool: "marker",
+              color: currentSketchColor,
+              size: currentSketchSize
+            });
+          }
+          prevPt = pt;
         } else if (currentSketchTool === "eraser") {
-          if (canvasId === "whiteboardCanvas") {
+          const isWb = canvasId === "whiteboardCanvas";
+          if (isWb) {
             ctx.globalCompositeOperation = "source-over";
             ctx.globalAlpha = 1.0;
             ctx.strokeStyle = "#ffffff";
             ctx.lineWidth = Math.max(16, currentSketchSize * 4);
-            ctx.lineTo(pt.x, pt.y);
-            ctx.stroke();
           } else {
             ctx.globalCompositeOperation = "destination-out";
             ctx.lineWidth = Math.max(18, currentSketchSize * 4);
-            ctx.lineTo(pt.x, pt.y);
-            ctx.stroke();
           }
+          ctx.beginPath();
+          ctx.moveTo(prevPt ? prevPt.x : pt.x, prevPt ? prevPt.y : pt.y);
+          ctx.lineTo(pt.x, pt.y);
+          ctx.stroke();
+
+          if (realtimeSocket && realtimeSocket.connected && currentRoomId && prevPt) {
+            realtimeSocket.emit("sketch-live-stroke", {
+              roomId: currentRoomId,
+              targetCanvasId: canvasId,
+              fromX: prevPt.x,
+              fromY: prevPt.y,
+              toX: pt.x,
+              toY: pt.y,
+              tool: "eraser",
+              color: isWb ? "#ffffff" : "#000000",
+              size: currentSketchSize
+            });
+          }
+          prevPt = pt;
         } else {
           // Shape preview: restore snapshot first
           ctx.putImageData(snapshotImageData, 0, 0);
@@ -3666,6 +4264,23 @@
         drawing = false;
         ctx.globalCompositeOperation = "source-over";
         ctx.globalAlpha = 1.0;
+        prevPt = null;
+
+        const dataUrl = canvas.toDataURL();
+
+        // Broadcast authoritative canvas snapshot to all connected participants over Socket.IO
+        if (realtimeSocket && realtimeSocket.connected && currentRoomId) {
+          try {
+            realtimeSocket.emit("sketch-update", {
+              roomId: currentRoomId,
+              targetCanvasId: canvasId,
+              dataUrl: dataUrl,
+              user: currentUser
+            });
+          } catch (e) {
+            console.warn("[CollabSpace] sketch-update emit error:", e);
+          }
+        }
 
         if (collabChannel && connectionState === "Connected") {
           try {
@@ -3673,7 +4288,7 @@
               type: "SKETCH_SYNC",
               roomId: currentRoomId,
               targetCanvasId: canvasId,
-              dataUrl: canvas.toDataURL()
+              dataUrl: dataUrl
             });
           } catch {}
         }
@@ -3734,6 +4349,26 @@
       const ctx = c.getContext("2d");
       ctx.clearRect(0, 0, c.width, c.height);
       restoreDataUrlToCanvas(c, prevUrl);
+
+      // Broadcast undo to other participants
+      if (realtimeSocket && realtimeSocket.connected && currentRoomId) {
+        realtimeSocket.emit("sketch-undo", {
+          roomId: currentRoomId,
+          targetCanvasId: lastActiveCanvasId,
+          dataUrl: prevUrl,
+          user: currentUser
+        });
+      }
+      if (collabChannel) {
+        try {
+          collabChannel.postMessage({
+            type: "SKETCH_SYNC",
+            roomId: currentRoomId,
+            targetCanvasId: lastActiveCanvasId,
+            dataUrl: prevUrl
+          });
+        } catch {}
+      }
     });
 
     document.getElementById("btnSketchClear").addEventListener("click", () => {
@@ -3747,10 +4382,33 @@
           ctx.clearRect(0, 0, c.width, c.height);
         }
       });
+      Object.keys(canvasHistories).forEach(k => {
+        canvasHistories[k] = [];
+      });
+
+      // Broadcast canvas clear to all room participants
+      if (realtimeSocket && realtimeSocket.connected && currentRoomId) {
+        realtimeSocket.emit("sketch-clear", {
+          roomId: currentRoomId,
+          user: currentUser
+        });
+      }
+      if (collabChannel) {
+        try {
+          collabChannel.postMessage({
+            type: "SKETCH_CLEAR",
+            roomId: currentRoomId
+          });
+        } catch {}
+      }
       showToast("Cleared all sketch markings.");
     });
 
     document.getElementById("btnInsertSketchIntoNotes").addEventListener("click", () => {
+      if (currentIsReadOnly) {
+        showToast("Read-Only: You cannot modify notes.");
+        return;
+      }
       const c = document.getElementById(lastActiveCanvasId) || document.getElementById("whiteboardCanvas");
       if (!c) return;
       const dataUrl = c.toDataURL("image/png");
