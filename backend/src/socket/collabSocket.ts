@@ -173,6 +173,25 @@ export function setupCollabSocket(io: Server): void {
         if (!roomId) return;
 
         const cleanRoomId = roomId.trim().toUpperCase();
+
+        if (currentRoomId && currentRoomId !== cleanRoomId) {
+          socket.leave(currentRoomId);
+          const oldMap = roomParticipants.get(currentRoomId);
+          if (oldMap) {
+            oldMap.delete(socket.id);
+            if (oldMap.size === 0) {
+              roomParticipants.delete(currentRoomId);
+            } else {
+              const updatedOld = getDeduplicatedParticipants(currentRoomId);
+              io.to(currentRoomId).emit("participants-update", {
+                roomId: currentRoomId,
+                participants: updatedOld
+              });
+              io.to(currentRoomId).emit("presence-update", updatedOld);
+            }
+          }
+        }
+
         currentRoomId = cleanRoomId;
         socket.join(cleanRoomId);
 
@@ -398,7 +417,8 @@ export function setupCollabSocket(io: Server): void {
         // 3. Notify others of the new collaborator
         socket.to(cleanRoomId).emit("collaborator-joined", {
           socketId: socket.id,
-          user: currentUser
+          user: currentUser,
+          participants: activeParticipants
         });
       } catch (err) {
         console.error("[CollabSocket] Error in join-room:", err);
@@ -419,6 +439,10 @@ export function setupCollabSocket(io: Server): void {
         if (!roomId || contentHtml === undefined) return;
 
         const cleanRoomId = roomId.trim().toUpperCase();
+        if (!socket.rooms.has(cleanRoomId)) {
+          socket.join(cleanRoomId);
+        }
+
         let ydoc = roomYDocs.get(cleanRoomId);
         if (!ydoc) {
           ydoc = new Y.Doc();
@@ -435,6 +459,13 @@ export function setupCollabSocket(io: Server): void {
         const newVersion = (roomVersions.get(cleanRoomId) || 0) + 1;
         roomVersions.set(cleanRoomId, newVersion);
 
+        // Update in-memory document state immediately
+        const prevDoc = roomDocs.get(cleanRoomId);
+        roomDocs.set(cleanRoomId, {
+          title: title || prevDoc?.title || "Untitled Document",
+          htmlContent: contentHtml
+        });
+
         const senderUser = currentUser || {
           userId: data.user?.id || data.user?.userId || "anon",
           fullName: data.user?.fullName || "Collaborator",
@@ -448,7 +479,7 @@ export function setupCollabSocket(io: Server): void {
         const broadcastPayload = {
           roomId: cleanRoomId,
           contentHtml,
-          title,
+          title: title || prevDoc?.title || "Untitled Document",
           updateBase64,
           crdtVersion: newVersion,
           userId: senderUser.userId,
@@ -461,9 +492,42 @@ export function setupCollabSocket(io: Server): void {
         socket.to(cleanRoomId).emit("crdt-update", broadcastPayload);
 
         // Debounced persistence to MongoDB
-        queueSaveDocument(cleanRoomId, title || "", contentHtml, ydoc, senderUser.fullName);
+        queueSaveDocument(cleanRoomId, title || prevDoc?.title || "", contentHtml, ydoc, senderUser.fullName);
       } catch (err) {
         console.error("[CollabSocket] Error in doc-update:", err);
+      }
+    });
+
+    // Provide on-demand participant list
+    socket.on("get-participants", (data: { roomId: string }) => {
+      if (!data?.roomId) return;
+      const clean = data.roomId.trim().toUpperCase();
+      const participants = getDeduplicatedParticipants(clean);
+      socket.emit("participants-update", { roomId: clean, participants });
+      socket.emit("presence-update", participants);
+    });
+
+    // Provide on-demand document sync
+    socket.on("request-doc-sync", (data: { roomId: string }) => {
+      if (!data?.roomId) return;
+      const clean = data.roomId.trim().toUpperCase();
+      const doc = roomDocs.get(clean);
+      const host = roomOwners.get(clean);
+      const v = roomVersions.get(clean) || 1;
+      if (doc) {
+        socket.emit("init-document", {
+          roomId: clean,
+          title: doc.title,
+          contentHtml: doc.htmlContent,
+          crdtVersion: v,
+          hostUser: host
+        });
+        socket.emit("doc-update", {
+          roomId: clean,
+          title: doc.title,
+          contentHtml: doc.htmlContent,
+          crdtVersion: v
+        });
       }
     });
 
