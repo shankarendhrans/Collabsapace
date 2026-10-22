@@ -5,12 +5,14 @@ import mongoose from "mongoose";
 import { DocumentModel } from "../models/Document";
 import { RoomModel } from "../models/Room";
 
+export type ParticipantRole = "Host" | "Collaborator" | "Viewer";
+
 export interface Participant {
   socketId: string;
   userId: string;
   username: string;
   fullName: string;
-  role: "Host" | "Collaborator";
+  role: ParticipantRole;
   color: string;
   joinedAt: number;
 }
@@ -19,7 +21,7 @@ export interface PublicParticipant {
   userId: string;
   username: string;
   fullName: string;
-  role: "Host" | "Collaborator";
+  role: ParticipantRole;
   color: string;
   status: "online";
 }
@@ -31,6 +33,9 @@ const roomParticipants = new Map<string, Map<string, Participant>>();
 const roomOwners = new Map<string, { userId: string; fullName: string; username: string; color: string }>();
 const roomVersions = new Map<string, number>();
 const saveTimeouts = new Map<string, NodeJS.Timeout>();
+const roomSketches = new Map<string, Map<string, string>>();
+const roomProjectedFiles = new Map<string, any[]>();
+const roomAccessSettings = new Map<string, { defaultRole: "viewer" | "editor"; access: "readonly" | "edit" }>();
 
 const AVATAR_COLORS = [
   "#2563eb", // Blue
@@ -134,12 +139,63 @@ function queueSaveDocument(roomId: string, title: string, htmlContent: string, y
   saveTimeouts.set(roomId, timeout);
 }
 
+export function setRoomAccessSetting(roomId: string, access: "readonly" | "edit", defaultRole?: "viewer" | "editor") {
+  const clean = roomId.trim().toUpperCase();
+  roomAccessSettings.set(clean, {
+    access,
+    defaultRole: defaultRole || (access === "readonly" ? "viewer" : "editor")
+  });
+}
+
+export function getRoomAccessSetting(roomId: string): { defaultRole: "viewer" | "editor"; access: "readonly" | "edit" } {
+  const clean = roomId.trim().toUpperCase();
+  return roomAccessSettings.get(clean) || { access: "edit", defaultRole: "editor" };
+}
+
+export function addRoomProjectedFile(roomId: string, fileRecord: any, broadcast = true) {
+  const clean = roomId.trim().toUpperCase();
+  if (!roomProjectedFiles.has(clean)) {
+    roomProjectedFiles.set(clean, []);
+  }
+  const list = roomProjectedFiles.get(clean)!;
+  const idx = list.findIndex((f) => f.id === fileRecord.id || (f.fileId && f.fileId === fileRecord.fileId));
+  if (idx >= 0) {
+    list[idx] = fileRecord;
+  } else {
+    list.push(fileRecord);
+  }
+  if (broadcast && globalIo) {
+    globalIo.to(clean).emit("project-file", {
+      roomId: clean,
+      fileRecord
+    });
+    globalIo.to(clean).emit("PROJECTED_FILE_SYNC", {
+      roomId: clean,
+      projectedFile: fileRecord
+    });
+  }
+  return fileRecord;
+}
+
+export function getRoomProjectedFiles(roomId: string): any[] {
+  const clean = roomId.trim().toUpperCase();
+  return roomProjectedFiles.get(clean) || [];
+}
+
 export function getRoomMemoryState(roomId: string) {
   const clean = roomId.trim().toUpperCase();
+  const sketchMap = roomSketches.get(clean);
+  const setting = roomAccessSettings.get(clean);
+  const files = roomProjectedFiles.get(clean) || [];
   return {
     owner: roomOwners.get(clean),
     doc: roomDocs.get(clean),
-    participants: getDeduplicatedParticipants(clean)
+    participants: getDeduplicatedParticipants(clean),
+    sketches: sketchMap ? Object.fromEntries(sketchMap) : {},
+    projectedFiles: files,
+    latestProjectedFile: files.length > 0 ? files[files.length - 1] : null,
+    access: setting?.access || "edit",
+    defaultRole: setting?.defaultRole || "editor"
   };
 }
 
@@ -152,6 +208,9 @@ export function deleteRoomFromMemory(roomId: string) {
   roomYDocs.delete(clean);
   roomParticipants.delete(clean);
   roomVersions.delete(clean);
+  roomSketches.delete(clean);
+  roomProjectedFiles.delete(clean);
+  roomAccessSettings.delete(clean);
   if (saveTimeouts.has(clean)) {
     clearTimeout(saveTimeouts.get(clean)!);
     saveTimeouts.delete(clean);
@@ -248,26 +307,56 @@ export function setupCollabSocket(io: Server): void {
           }
         }
 
+        if (dbRoom && dbRoom.accessSettings) {
+          const isViewerDef = dbRoom.accessSettings.defaultRole === "viewer";
+          if (!roomAccessSettings.has(cleanRoomId) || isViewerDef) {
+            roomAccessSettings.set(cleanRoomId, {
+              defaultRole: isViewerDef ? "viewer" : "editor",
+              access: isViewerDef ? "readonly" : "edit"
+            });
+          }
+        }
+
+        if ((payload as any).access === "readonly" || payload.role === "viewer" || (payload as any).defaultRole === "viewer") {
+          roomAccessSettings.set(cleanRoomId, {
+            defaultRole: "viewer",
+            access: "readonly"
+          });
+        }
+
+        const roomSetting = roomAccessSettings.get(cleanRoomId) || { access: "edit", defaultRole: "editor" };
+
         // Check if user is Host (owner of the room)
         const knownOwner = roomOwners.get(cleanRoomId);
-        let role: "Host" | "Collaborator" = "Collaborator";
+        let role: ParticipantRole = "Collaborator";
 
-        if (knownOwner && knownOwner.userId) {
-          if (userId && (knownOwner.userId === userId || (username && knownOwner.username === username))) {
-            role = "Host";
-            knownOwner.fullName = fullName || knownOwner.fullName;
-          } else {
-            role = "Collaborator";
+        const isHost = () => {
+          if (knownOwner && knownOwner.userId) {
+            const sameId = !!(userId && knownOwner.userId === userId);
+            const validCustomUsername = username && username !== "collaborator" && !username.startsWith("user_");
+            const sameUser = !!(validCustomUsername && knownOwner.username === username);
+            return sameId || sameUser;
           }
-        } else if (dbRoom) {
-          // Room exists in DB, and this user is not the owner
-          role = "Collaborator";
-        } else if (payload.user?.role === "Collaborator" || payload.role === "Collaborator") {
-          role = "Collaborator";
-        } else if (payload.user?.role === "Host" || payload.user?.fullName?.includes("(Host)")) {
+          if (dbRoom) {
+            const ownerDoc = typeof dbRoom.ownerId === "object" && dbRoom.ownerId !== null ? dbRoom.ownerId : null;
+            const trueOwnerId = ownerDoc?._id ? ownerDoc._id.toString() : (dbRoom.ownerId?.toString() || "");
+            return !!(userId && trueOwnerId === userId);
+          }
+          if (payload.user?.role === "Host" || payload.role === "Host" || payload.user?.fullName?.includes("(Host)")) {
+            return true;
+          }
+          if (!roomParticipants.has(cleanRoomId) || roomParticipants.get(cleanRoomId)!.size === 0) {
+            return true;
+          }
+          return false;
+        };
+
+        if (isHost()) {
           role = "Host";
-        } else if (!roomParticipants.has(cleanRoomId) || roomParticipants.get(cleanRoomId)!.size === 0) {
-          role = "Host";
+        } else if (roomSetting.access === "readonly" || roomSetting.defaultRole === "viewer" || payload.role === "Viewer" || payload.user?.role === "Viewer") {
+          role = "Viewer";
+        } else {
+          role = "Collaborator";
         }
 
         currentUser = {
@@ -290,6 +379,8 @@ export function setupCollabSocket(io: Server): void {
 
           if (mongoose.connection.readyState === 1) {
             try {
+              const isRo = (payload as any).access === "readonly" || payload.role === "viewer" || (payload as any).defaultRole === "viewer";
+              const chosenRole = isRo ? "viewer" : "editor";
               const isValidObjId = mongoose.Types.ObjectId.isValid(userId) && userId.length === 24;
               const ownerObjId = isValidObjId ? new mongoose.Types.ObjectId(userId) : new mongoose.Types.ObjectId("000000000000000000000001");
               await RoomModel.findOneAndUpdate(
@@ -297,13 +388,14 @@ export function setupCollabSocket(io: Server): void {
                 {
                   $set: {
                     name: payload.roomTitle || "Untitled Room",
-                    updatedAt: new Date()
+                    updatedAt: new Date(),
+                    ...(isRo ? { "accessSettings.defaultRole": "viewer" } : {})
                   },
                   $setOnInsert: {
                     roomId: cleanRoomId,
                     ownerId: ownerObjId,
                     authorizedMembers: [{ userId: ownerObjId, role: "owner", joinedAt: new Date() }],
-                    accessSettings: { allowLinkJoin: true, defaultRole: "editor" }
+                    accessSettings: { allowLinkJoin: true, defaultRole: chosenRole }
                   }
                 },
                 { upsert: true }
@@ -387,7 +479,13 @@ export function setupCollabSocket(io: Server): void {
 
         const hostOwner = roomOwners.get(cleanRoomId);
 
-        // 1. Send authoritative document state to newly joined socket
+        // 1. Send authoritative document state, canvas sketches, and projected files to newly joined socket
+        const sketchMap = roomSketches.get(cleanRoomId);
+        const currentSketches = sketchMap ? Object.fromEntries(sketchMap) : {};
+        const files = roomProjectedFiles.get(cleanRoomId) || [];
+        const latestFile = files.length > 0 ? files[files.length - 1] : null;
+        const isReadOnly = currentUser.role === "Viewer" || (roomSetting.access === "readonly" && currentUser.role !== "Host");
+
         socket.emit("init-document", {
           roomId: cleanRoomId,
           title: docTitle,
@@ -396,14 +494,24 @@ export function setupCollabSocket(io: Server): void {
           crdtVersion: currentVersion,
           role: currentUser.role,
           isHost: currentUser.role === "Host",
-          hostUser: hostOwner || (currentUser.role === "Host" ? currentUser : undefined)
+          isReadOnly: isReadOnly,
+          access: roomSetting.access,
+          defaultRole: roomSetting.defaultRole,
+          hostUser: hostOwner || (currentUser.role === "Host" ? currentUser : undefined),
+          sketches: currentSketches,
+          projectedFiles: files,
+          latestProjectedFile: latestFile
         });
 
         // Backwards compatibility for existing crdtService listeners
         socket.emit("crdt-init", {
           stateBase64: fullStateBase64,
           contentHtml: docContent,
-          title: docTitle
+          title: docTitle,
+          sketches: currentSketches,
+          isReadOnly: isReadOnly,
+          projectedFiles: files,
+          latestProjectedFile: latestFile
         });
 
         // 2. Broadcast complete, authoritative participant list to EVERYONE in the room
@@ -443,6 +551,15 @@ export function setupCollabSocket(io: Server): void {
           socket.join(cleanRoomId);
         }
 
+        const isReadOnlyRoom = roomAccessSettings.get(cleanRoomId)?.access === "readonly" || roomAccessSettings.get(cleanRoomId)?.defaultRole === "viewer";
+        if (currentUser?.role === "Viewer" || (isReadOnlyRoom && currentUser?.role !== "Host")) {
+          socket.emit("permission-denied", {
+            action: "edit",
+            error: "You are in read-only viewer mode. Only the room host can modify this document."
+          });
+          return;
+        }
+
         let ydoc = roomYDocs.get(cleanRoomId);
         if (!ydoc) {
           ydoc = new Y.Doc();
@@ -459,8 +576,20 @@ export function setupCollabSocket(io: Server): void {
         const newVersion = (roomVersions.get(cleanRoomId) || 0) + 1;
         roomVersions.set(cleanRoomId, newVersion);
 
-        // Update in-memory document state immediately
+        // Update in-memory document state immediately, protecting non-placeholder content
         const prevDoc = roomDocs.get(cleanRoomId);
+        const isPlaceholderText = (html?: string) => {
+          if (!html) return true;
+          return html.includes("Connecting to shared workspace...") ||
+                 html.includes("Connecting to server...") ||
+                 html.includes("Loading collaborative document");
+        };
+
+        if (isPlaceholderText(contentHtml) && prevDoc && !isPlaceholderText(prevDoc.htmlContent)) {
+          // Reject replacing authoritative doc content with placeholder text
+          return;
+        }
+
         roomDocs.set(cleanRoomId, {
           title: title || prevDoc?.title || "Untitled Document",
           htmlContent: contentHtml
@@ -514,25 +643,39 @@ export function setupCollabSocket(io: Server): void {
       const doc = roomDocs.get(clean);
       const host = roomOwners.get(clean);
       const v = roomVersions.get(clean) || 1;
+      const sketchMap = roomSketches.get(clean);
+      const currentSketches = sketchMap ? Object.fromEntries(sketchMap) : {};
       if (doc) {
         socket.emit("init-document", {
           roomId: clean,
           title: doc.title,
           contentHtml: doc.htmlContent,
           crdtVersion: v,
-          hostUser: host
+          hostUser: host,
+          sketches: currentSketches
         });
         socket.emit("doc-update", {
           roomId: clean,
           title: doc.title,
           contentHtml: doc.htmlContent,
-          crdtVersion: v
+          crdtVersion: v,
+          sketches: currentSketches
         });
       }
     });
 
     // Handle crdt-update alias
     socket.on("crdt-update", async (data: any) => {
+      const clean = (data?.roomId || "").trim().toUpperCase();
+      const isReadOnlyRoom = roomAccessSettings.get(clean)?.access === "readonly" || roomAccessSettings.get(clean)?.defaultRole === "viewer";
+      if (currentUser?.role === "Viewer" || (isReadOnlyRoom && currentUser?.role !== "Host")) {
+        socket.emit("permission-denied", {
+          action: "crdt-update",
+          error: "You are in read-only viewer mode. Only the room host can modify this document."
+        });
+        return;
+      }
+
       socket.emit("doc-update-ack"); // acknowledge
       socket.to(data.roomId).emit("crdt-update", data);
       socket.to(data.roomId).emit("doc-update", {
@@ -557,16 +700,113 @@ export function setupCollabSocket(io: Server): void {
 
     // Real-Time File Projection Sync
     socket.on("project-file", (data: { roomId: string; fileRecord: any; user?: any }) => {
-      if (!data.roomId) return;
-      socket.to(data.roomId).emit("project-file", data);
-      socket.to(data.roomId).emit("PROJECTED_FILE_SYNC", data);
+      if (!data?.roomId || !data?.fileRecord) return;
+      const clean = data.roomId.trim().toUpperCase();
+      const isReadOnlyRoom = roomAccessSettings.get(clean)?.access === "readonly" || roomAccessSettings.get(clean)?.defaultRole === "viewer";
+      if (currentUser?.role === "Viewer" || (isReadOnlyRoom && currentUser?.role !== "Host")) {
+        socket.emit("permission-denied", {
+          action: "project-file",
+          error: "You are in read-only viewer mode. Only authorized editors can upload or project files."
+        });
+        return;
+      }
+
+      addRoomProjectedFile(clean, data.fileRecord, false);
+      socket.to(clean).emit("project-file", data);
+      socket.to(clean).emit("PROJECTED_FILE_SYNC", data);
     });
 
     // Real-Time Canvas / Sketch Sync
     socket.on("sketch-update", (data: { roomId: string; targetCanvasId: string; dataUrl: string; user?: any }) => {
-      if (!data.roomId) return;
-      socket.to(data.roomId).emit("sketch-update", data);
-      socket.to(data.roomId).emit("SKETCH_SYNC", data);
+      if (!data?.roomId) return;
+      const clean = data.roomId.trim().toUpperCase();
+      const isReadOnlyRoom = roomAccessSettings.get(clean)?.access === "readonly" || roomAccessSettings.get(clean)?.defaultRole === "viewer";
+      if (currentUser?.role === "Viewer" || (isReadOnlyRoom && currentUser?.role !== "Host")) {
+        socket.emit("permission-denied", {
+          action: "sketch",
+          error: "You are in read-only viewer mode. Drawing is restricted to authorized editors."
+        });
+        return;
+      }
+
+      if (!roomSketches.has(clean)) {
+        roomSketches.set(clean, new Map());
+      }
+      if (data.targetCanvasId && data.dataUrl) {
+        roomSketches.get(clean)!.set(data.targetCanvasId, data.dataUrl);
+      }
+      socket.to(clean).emit("sketch-update", data);
+      socket.to(clean).emit("SKETCH_SYNC", data);
+    });
+
+    // Real-Time Live Drawing Stroke Sync (continuous movement)
+    socket.on("sketch-live-stroke", (data: {
+      roomId: string;
+      targetCanvasId: string;
+      fromX: number;
+      fromY: number;
+      toX: number;
+      toY: number;
+      tool: string;
+      color: string;
+      size: number;
+      isStart?: boolean;
+      isEnd?: boolean;
+      user?: any;
+    }) => {
+      if (!data?.roomId) return;
+      const clean = data.roomId.trim().toUpperCase();
+      const isReadOnlyRoom = roomAccessSettings.get(clean)?.access === "readonly" || roomAccessSettings.get(clean)?.defaultRole === "viewer";
+      if (currentUser?.role === "Viewer" || (isReadOnlyRoom && currentUser?.role !== "Host")) {
+        socket.emit("permission-denied", {
+          action: "sketch",
+          error: "You are in read-only viewer mode. Drawing is restricted to authorized editors."
+        });
+        return;
+      }
+      socket.to(clean).emit("sketch-live-stroke", data);
+    });
+
+    // Real-Time Canvas Clear
+    socket.on("sketch-clear", (data: { roomId: string; targetCanvasId?: string; user?: any }) => {
+      if (!data?.roomId) return;
+      const clean = data.roomId.trim().toUpperCase();
+      const isReadOnlyRoom = roomAccessSettings.get(clean)?.access === "readonly" || roomAccessSettings.get(clean)?.defaultRole === "viewer";
+      if (currentUser?.role === "Viewer" || (isReadOnlyRoom && currentUser?.role !== "Host")) {
+        socket.emit("permission-denied", {
+          action: "sketch",
+          error: "You are in read-only viewer mode."
+        });
+        return;
+      }
+
+      if (data.targetCanvasId) {
+        roomSketches.get(clean)?.delete(data.targetCanvasId);
+      } else {
+        roomSketches.delete(clean);
+      }
+      socket.to(clean).emit("sketch-clear", data);
+    });
+
+    // Real-Time Canvas Undo
+    socket.on("sketch-undo", (data: { roomId: string; targetCanvasId: string; dataUrl?: string; user?: any }) => {
+      if (!data?.roomId) return;
+      const clean = data.roomId.trim().toUpperCase();
+      const isReadOnlyRoom = roomAccessSettings.get(clean)?.access === "readonly" || roomAccessSettings.get(clean)?.defaultRole === "viewer";
+      if (currentUser?.role === "Viewer" || (isReadOnlyRoom && currentUser?.role !== "Host")) {
+        return;
+      }
+
+      if (!roomSketches.has(clean)) {
+        roomSketches.set(clean, new Map());
+      }
+      if (data.targetCanvasId && data.dataUrl) {
+        roomSketches.get(clean)!.set(data.targetCanvasId, data.dataUrl);
+      } else if (data.targetCanvasId) {
+        roomSketches.get(clean)?.delete(data.targetCanvasId);
+      }
+      socket.to(clean).emit("sketch-undo", data);
+      socket.to(clean).emit("sketch-update", data);
     });
 
     // Explicit Leave Room

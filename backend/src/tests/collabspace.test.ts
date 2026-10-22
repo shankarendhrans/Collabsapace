@@ -326,6 +326,140 @@ async function runRealtimeIntegrationTests() {
     console.log("  ✓ Participants notified via room-deleted event upon room deletion");
     console.log("  [PASS] TEST J — ROOM DELETION BROADCAST\n");
 
+    // -------------------------------------------------------------------------
+    // TEST K: LIVE CONTINUOUS DRAWING STROKE SYNCHRONIZATION
+    // -------------------------------------------------------------------------
+    console.log("[RUNNING] TEST K: Real-Time Live Drawing Stroke Synchronization...");
+    let bReceivedLiveStroke: any = null;
+    let dReceivedLiveStroke: any = null;
+
+    clientB.on("sketch-live-stroke", (data) => {
+      if (data.roomId === ROOM_1) bReceivedLiveStroke = data;
+    });
+    clientD.on("sketch-live-stroke", (data) => {
+      if (data.roomId === ROOM_1) dReceivedLiveStroke = data;
+    });
+
+    const strokeSample = {
+      roomId: ROOM_1,
+      targetCanvasId: "whiteboardCanvas",
+      fromX: 100,
+      fromY: 150,
+      toX: 120,
+      toY: 175,
+      tool: "pen",
+      color: "#ef4444",
+      size: 4
+    };
+
+    clientA.emit("sketch-live-stroke", strokeSample);
+    await wait(200);
+
+    assert(bReceivedLiveStroke !== null, "Client B must receive live stroke event in real time");
+    assert(dReceivedLiveStroke !== null, "Client D must receive live stroke event in real time");
+    assert.strictEqual(bReceivedLiveStroke.tool, "pen");
+    assert.strictEqual(bReceivedLiveStroke.color, "#ef4444");
+    assert.strictEqual(bReceivedLiveStroke.toX, 120);
+    console.log("  ✓ Live continuous stroke coordinates and tool properties broadcast in real time");
+    console.log("  [PASS] TEST K — LIVE STROKE SYNCHRONIZATION\n");
+
+    // -------------------------------------------------------------------------
+    // TEST L: AUTHORITATIVE CANVAS SNAPSHOT SYNCHRONIZATION
+    // -------------------------------------------------------------------------
+    console.log("[RUNNING] TEST L: Authoritative Canvas Snapshot Synchronization...");
+    let bReceivedSketchUpdate: any = null;
+    clientB.on("sketch-update", (data) => {
+      if (data.roomId === ROOM_1) bReceivedSketchUpdate = data;
+    });
+
+    const testDataUrl = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+    clientA.emit("sketch-update", {
+      roomId: ROOM_1,
+      targetCanvasId: "whiteboardCanvas",
+      dataUrl: testDataUrl,
+      user: { fullName: "Alice (Host)" }
+    });
+    await wait(200);
+
+    assert(bReceivedSketchUpdate !== null, "Client B must receive sketch-update event");
+    assert.strictEqual(bReceivedSketchUpdate.dataUrl, testDataUrl);
+    console.log("  ✓ Final canvas snapshot delivered and reconciled across participants");
+    console.log("  [PASS] TEST L — CANVAS SNAPSHOT SYNCHRONIZATION\n");
+
+    // -------------------------------------------------------------------------
+    // TEST M: CANVAS UNDO & CLEAR CANVAS SYNCHRONIZATION
+    // -------------------------------------------------------------------------
+    console.log("[RUNNING] TEST M: Canvas Undo & Clear Canvas Synchronization...");
+    let bReceivedClear = false;
+    let bReceivedUndo = false;
+
+    clientB.on("sketch-clear", (data) => {
+      if (data.roomId === ROOM_1) bReceivedClear = true;
+    });
+    clientB.on("sketch-undo", (data) => {
+      if (data.roomId === ROOM_1) bReceivedUndo = true;
+    });
+
+    // Test Undo
+    clientA.emit("sketch-undo", {
+      roomId: ROOM_1,
+      targetCanvasId: "whiteboardCanvas",
+      dataUrl: ""
+    });
+    await wait(150);
+    assert.strictEqual(bReceivedUndo, true, "Client B must receive sketch-undo");
+
+    // Test Clear
+    clientA.emit("sketch-clear", {
+      roomId: ROOM_1
+    });
+    await wait(150);
+    assert.strictEqual(bReceivedClear, true, "Client B must receive sketch-clear");
+    console.log("  ✓ Undo and clear operations successfully propagated to all room participants");
+    console.log("  [PASS] TEST M — CANVAS UNDO & CLEAR\n");
+
+    // -------------------------------------------------------------------------
+    // TEST N: LATE JOINING PARTICIPANT RECEIVES PERSISTED DRAWING STATE
+    // -------------------------------------------------------------------------
+    console.log("[RUNNING] TEST N: Late Joiner Canvas Sketch State Synchronization...");
+    // Prime room with a drawing
+    const lateJoinRoom = "CS-LATE-SKETCH-ROOM";
+    const hostSketch = await createClient("Host Emma");
+    hostSketch.emit("join-room", {
+      roomId: lateJoinRoom,
+      user: { id: "user-emma", fullName: "Emma", role: "Host" }
+    });
+    await wait(150);
+
+    hostSketch.emit("sketch-update", {
+      roomId: lateJoinRoom,
+      targetCanvasId: "whiteboardCanvas",
+      dataUrl: testDataUrl
+    });
+    await wait(150);
+
+    // Now a late joiner connects
+    let lateJoinerSketches: any = null;
+    const clientLateSketch = await createClient("Late Sketch Joiner");
+    clientLateSketch.on("init-document", (data) => {
+      if (data.roomId === lateJoinRoom) lateJoinerSketches = data.sketches;
+    });
+
+    clientLateSketch.emit("join-room", {
+      roomId: lateJoinRoom,
+      user: { id: "user-late-sketch", fullName: "Late Sketch User" }
+    });
+    await wait(250);
+
+    assert(lateJoinerSketches !== null, "Late joiner must receive sketches dictionary in init-document");
+    assert.strictEqual(
+      lateJoinerSketches["whiteboardCanvas"],
+      testDataUrl,
+      "Late joiner must receive persisted canvas dataUrl for whiteboardCanvas"
+    );
+    console.log("  ✓ Late joiner receives complete canvas drawing state on joining");
+    console.log("  [PASS] TEST N — LATE JOINING DRAWING STATE\n");
+
     // Cleanup all clients
     clientA.disconnect();
     clientB.disconnect();
@@ -333,9 +467,11 @@ async function runRealtimeIntegrationTests() {
     clientD.disconnect();
     clientIsolated.disconnect();
     clientLateCollaborator.disconnect();
+    hostSketch.disconnect();
+    clientLateSketch.disconnect();
 
     console.log("=======================================================");
-    console.log("  ALL TESTS PASSED SUCCESSFULLY! (TESTS A through J)");
+    console.log("  ALL TESTS PASSED SUCCESSFULLY! (TESTS A through N)");
     console.log("=======================================================\n");
 
     server.close();

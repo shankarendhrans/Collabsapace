@@ -4,7 +4,7 @@ import mongoose from "mongoose";
 import { RoomModel } from "../models/Room";
 import { DocumentModel } from "../models/Document";
 import { requireAuth, optionalAuth, AuthRequest } from "../middleware/auth";
-import { getRoomMemoryState, deleteRoomFromMemory } from "../socket/collabSocket";
+import { getRoomMemoryState, deleteRoomFromMemory, setRoomAccessSetting, getRoomAccessSetting } from "../socket/collabSocket";
 
 const router = Router();
 
@@ -66,6 +66,9 @@ async function handleCreateRoom(req: AuthRequest, res: Response) {
         metadata: { wordCount: 6, charCount: 42, lastEditedBy: req.user!.fullName }
       });
     }
+
+    const isViewer = defaultRole === "viewer";
+    setRoomAccessSetting(roomId, isViewer ? "readonly" : "edit", isViewer ? "viewer" : "editor");
 
     res.status(201).json({ room, document: doc });
   } catch (err) {
@@ -376,17 +379,29 @@ router.get("/:roomId", optionalAuth, async (req: AuthRequest, res: Response) => 
       role: "Host"
     } : null);
 
+    const accessSetting = getRoomAccessSetting(cleanRoomId);
+    const isReadOnly = accessSetting.access === "readonly" || room?.accessSettings?.defaultRole === "viewer";
+
     res.json({
       room: room ? {
         ...room.toObject(),
         ownerId: hostUserId,
-        ownerName: hostFullName
+        ownerName: hostFullName,
+        access: isReadOnly ? "readonly" : "edit",
+        accessSettings: {
+          ...room.accessSettings,
+          defaultRole: isReadOnly ? "viewer" : (room.accessSettings?.defaultRole || "editor")
+        }
       } : {
         roomId: cleanRoomId,
         name: mem.doc?.title || `Workspace ${cleanRoomId}`,
         ownerId: hostUserId || "remote-host",
         ownerName: hostFullName || "Host",
-        access: "open"
+        access: isReadOnly ? "readonly" : (mem.access || "open"),
+        accessSettings: {
+          allowLinkJoin: true,
+          defaultRole: isReadOnly ? "viewer" : (mem.defaultRole || "editor")
+        }
       },
       document: doc || {
         roomId: cleanRoomId,
@@ -394,7 +409,9 @@ router.get("/:roomId", optionalAuth, async (req: AuthRequest, res: Response) => 
         htmlContent: mem.doc?.htmlContent || "<p>Start collaborating in real time...</p>"
       },
       hostUser,
-      participants: mem.participants
+      participants: mem.participants,
+      projectedFiles: mem.projectedFiles || [],
+      latestProjectedFile: mem.latestProjectedFile || null
     });
   } catch (err) {
     res.status(500).json({ error: "Failed to fetch room details." });
