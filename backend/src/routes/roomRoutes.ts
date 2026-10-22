@@ -352,10 +352,10 @@ router.get("/:roomId", optionalAuth, async (req: AuthRequest, res: Response) => 
     const cleanRoomId = roomId.trim().toUpperCase();
     const mem = getRoomMemoryState(cleanRoomId);
 
-    let room = null;
+    let room: any = null;
     let doc = null;
     try {
-      room = await RoomModel.findOne({ roomId: cleanRoomId });
+      room = await RoomModel.findOne({ roomId: cleanRoomId }).populate("ownerId", "fullName username email");
       doc = await DocumentModel.findOne({ roomId: cleanRoomId });
     } catch {}
 
@@ -364,12 +364,28 @@ router.get("/:roomId", optionalAuth, async (req: AuthRequest, res: Response) => 
       return;
     }
 
+    const ownerDoc = room && typeof room.ownerId === "object" && room.ownerId !== null ? room.ownerId : null;
+    const hostUserId = ownerDoc?._id?.toString() || (typeof room?.ownerId === "string" ? room.ownerId : room?.ownerId?.toString()) || mem.owner?.userId || "";
+    const hostFullName = ownerDoc?.fullName || ownerDoc?.username || mem.owner?.fullName || mem.owner?.username || "Room Host";
+    const hostUsername = ownerDoc?.username || mem.owner?.username || "";
+
+    const hostUser = mem.owner || (hostUserId ? {
+      userId: hostUserId,
+      fullName: hostFullName,
+      username: hostUsername,
+      role: "Host"
+    } : null);
+
     res.json({
-      room: room || {
+      room: room ? {
+        ...room.toObject(),
+        ownerId: hostUserId,
+        ownerName: hostFullName
+      } : {
         roomId: cleanRoomId,
         name: mem.doc?.title || `Workspace ${cleanRoomId}`,
-        ownerId: mem.owner?.userId || "remote-host",
-        ownerName: mem.owner?.fullName || "Host",
+        ownerId: hostUserId || "remote-host",
+        ownerName: hostFullName || "Host",
         access: "open"
       },
       document: doc || {
@@ -377,7 +393,7 @@ router.get("/:roomId", optionalAuth, async (req: AuthRequest, res: Response) => 
         title: mem.doc?.title || `Workspace ${cleanRoomId}`,
         htmlContent: mem.doc?.htmlContent || "<p>Start collaborating in real time...</p>"
       },
-      hostUser: mem.owner,
+      hostUser,
       participants: mem.participants
     });
   } catch (err) {

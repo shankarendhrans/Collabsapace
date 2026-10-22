@@ -280,7 +280,7 @@ const EditorPage: React.FC = () => {
                       Room Host / Owner
                     </span>
                     {(() => {
-                      const host = collaborators.find(c => c.role === 'Host') || collaborators[0];
+                      const host = collaborators.find(c => c.role === 'Host');
                       if (!host) {
                         return <div className="text-xs text-slate-500 italic p-2 rounded-xl bg-slate-950/40 border border-slate-800">Connecting host...</div>;
                       }
@@ -327,7 +327,7 @@ const EditorPage: React.FC = () => {
 
                     <div className="space-y-1.5">
                       {(() => {
-                        const host = collaborators.find(c => c.role === 'Host') || collaborators[0];
+                        const host = collaborators.find(c => c.role === 'Host');
                         const members = collaborators.filter(c => c !== host);
                         if (members.length === 0) {
                           return (

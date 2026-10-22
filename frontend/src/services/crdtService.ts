@@ -32,11 +32,13 @@ export class CollabCRDTProvider {
     this.ydoc = new Y.Doc();
     this.ytext = this.ydoc.getText('content');
 
-    const isLocal = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+    const storedBackend = typeof window !== 'undefined' ? localStorage.getItem('cs_backend_url') : null;
     const rawSocketUrl = (import.meta.env.VITE_SOCKET_URL || '').trim();
     const socketUrl = (rawSocketUrl && !rawSocketUrl.includes('your-backend-app') && !rawSocketUrl.includes('%') && rawSocketUrl.startsWith('http'))
       ? rawSocketUrl
-      : (isLocal ? 'http://localhost:5000' : 'https://collabsapace-backend.onrender.com');
+      : (storedBackend && storedBackend.startsWith('http')
+        ? storedBackend.replace(/\/$/, '')
+        : 'https://collabsapace-backend.onrender.com');
 
     this.socket = io(socketUrl, {
       auth: { token },

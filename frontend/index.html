@@ -1847,7 +1847,11 @@
     }
 
     function getInviteUrl(roomId) {
-      const base = window.location.href.split("?")[0];
+      const isLocalHost = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+      if (isLocalHost) {
+        return `https://collabsapace.vercel.app/?room=${encodeURIComponent(roomId)}`;
+      }
+      const base = window.location.href.split("?")[0].split("#")[0];
       return `${base}?room=${encodeURIComponent(roomId)}`;
     }
 
@@ -2505,9 +2509,9 @@
 
     const cleanInjected = (injectedUrl && !injectedUrl.startsWith("%") && !injectedUrl.includes("your-backend-app") && !injectedUrl.includes("example.com") && injectedUrl.startsWith("http")) ? injectedUrl.trim() : "";
 
-    const socketBaseUrl = isLocalHost
-      ? "http://localhost:5000"
-      : (storedBackendUrl || cleanInjected || OFFICIAL_RENDER_BACKEND);
+    const socketBaseUrl = (storedBackendUrl && storedBackendUrl.startsWith("http"))
+      ? storedBackendUrl
+      : (cleanInjected || OFFICIAL_RENDER_BACKEND);
 
     function sendSocketJoinRoom() {
       if (!realtimeSocket || !currentRoomId || !currentUser) return;
@@ -3789,28 +3793,81 @@
 
       if (!Array.isArray(users)) users = [];
 
-      // Identify Host (by role === 'Host', or owner of the room, or first user)
       const rooms = getRoomsDB();
       const currentRoom = currentRoomId ? rooms[currentRoomId] : null;
-      let hostUser = users.find(u => u.role === "Host" || (u.name && u.name.includes("Host")));
 
-      if (!hostUser && currentRoom && currentRoom.ownerId) {
-        hostUser = users.find(u => u.userId === currentRoom.ownerId);
+      // Determine if current logged-in user is the true room owner
+      const myId = String(currentUser?.id || currentUser?.userId || "").trim();
+      const roomOwnerId = String(currentRoom?.ownerId || "").trim();
+      const amIOwner = !!(myId && roomOwnerId && myId === roomOwnerId);
+
+      // Find the authoritative Host user
+      // 1. Look in socket presence for someone with role === 'Host'
+      let hostUser = users.find(u => u.role === "Host");
+
+      // 2. If no socket user has role 'Host', look for known ownerId in users
+      if (!hostUser && roomOwnerId) {
+        hostUser = users.find(u => String(u.userId || u.id || "").trim() === roomOwnerId);
       }
-      if (!hostUser && users.length > 0) {
-        hostUser = users[0];
+
+      // 3. If I am the creator/owner, hostUser is ME
+      if (!hostUser && amIOwner) {
+        hostUser = {
+          userId: myId,
+          name: currentUser.fullName,
+          fullName: currentUser.fullName,
+          role: "Host",
+          color: currentUser.color || "#2563eb"
+        };
       }
 
-      // Collaborators list (everyone except host)
-      const collaborators = users.filter(u => u !== hostUser);
+      // 4. If I am NOT the owner, construct the host representation from stored room metadata
+      if (!hostUser) {
+        const knownHostName = currentRoom?.ownerName || window.__lastRoomHost?.fullName || "Room Host";
+        const knownHostId = roomOwnerId || window.__lastRoomHost?.userId || "host";
+        hostUser = {
+          userId: knownHostId,
+          name: knownHostName,
+          fullName: knownHostName,
+          role: "Host",
+          color: "#2563eb",
+          isOffline: true
+        };
+      }
 
-      // 1. Render Dedicated Room Host Box
+      // Collaborators list: everyone who is NOT the hostUser
+      let collaborators = users.filter(u => {
+        if (!u) return false;
+        const uid = String(u.userId || u.id || "").trim();
+        const hostUid = String(hostUser?.userId || hostUser?.id || "").trim();
+        if (hostUid && uid === hostUid) return false;
+        if (u.role === "Host") return false;
+        return true;
+      });
+
+      // If current user is a collaborator, ensure they are placed in the collaborators list
+      if (!amIOwner && currentUser) {
+        const isSelfInCollab = collaborators.some(u => isPersonCurrentUser(u));
+        if (!isSelfInCollab) {
+          collaborators.push({
+            userId: myId,
+            name: currentUser.fullName,
+            fullName: currentUser.fullName,
+            role: "Collaborator",
+            color: currentUser.color || "#10b981"
+          });
+        }
+      }
+
+      // 1. Render Dedicated Room Host Box (Top Host Box)
       if (hostContainer) {
         if (hostUser) {
           const rawName = (hostUser.name || hostUser.fullName || "Host").replace(/\s*\(You\)\s*/gi, "").trim();
-          const isHostMe = isPersonCurrentUser(hostUser);
+          const isHostMe = amIOwner || isPersonCurrentUser(hostUser);
           const displayName = isHostMe ? `${rawName} (You)` : rawName;
           const initial = rawName.charAt(0).toUpperCase() || "H";
+          const isOnline = !hostUser.isOffline && users.some(u => String(u.userId || u.id || "").trim() === String(hostUser.userId || hostUser.id || "").trim() && u.role === "Host");
+
           hostContainer.innerHTML = `
             <div class="p-2.5 rounded-xl theme-subtle border theme-border flex items-center justify-between">
               <div class="flex items-center gap-2.5">
@@ -3821,9 +3878,9 @@
                   <div class="font-bold flex items-center gap-1.5">
                     <span>${displayName}</span>
                   </div>
-                  <span class="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1">
-                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                    Room Host • Online
+                  <span class="text-[10px] ${isOnline ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'} font-medium flex items-center gap-1">
+                    <span class="w-1.5 h-1.5 rounded-full ${isOnline ? 'bg-emerald-500 animate-pulse' : 'bg-amber-400'}"></span>
+                    ${isOnline ? 'Room Host • Online' : 'Room Host • Connecting'}
                   </span>
                 </div>
               </div>
@@ -3845,7 +3902,8 @@
       }
 
       if (avatarBar) {
-        avatarBar.innerHTML = users.map(u => {
+        const allDisplayUsers = hostUser ? [hostUser, ...collaborators] : collaborators;
+        avatarBar.innerHTML = allDisplayUsers.map(u => {
           const name = u.name || u.fullName || "User";
           const cleanName = name.replace(/\s*\(You\)\s*/gi, "").trim();
           const initial = cleanName.charAt(0).toUpperCase() || "U";
@@ -3879,7 +3937,7 @@
                   </div>
                   <span class="font-semibold">${displayName}</span>
                 </div>
-                <span class="text-[10px] font-medium theme-muted px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 border theme-border">${u.role || 'Collaborator'}</span>
+                <span class="text-[10px] font-medium px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">Collaborator</span>
               </div>
             `;
           }).join("");

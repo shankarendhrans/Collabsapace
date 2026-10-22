@@ -205,27 +205,48 @@ export function setupCollabSocket(io: Server): void {
           username = `user_${socket.id.slice(0, 4)}`;
         }
 
+        // Check if room exists in DB to resolve authoritative owner
+        let dbRoom: any = null;
+        if (mongoose.connection.readyState === 1) {
+          try {
+            dbRoom = await RoomModel.findOne({ roomId: cleanRoomId }).populate("ownerId", "fullName username email");
+          } catch {}
+        }
+
+        if (dbRoom) {
+          const ownerDoc = typeof dbRoom.ownerId === "object" && dbRoom.ownerId !== null ? dbRoom.ownerId : null;
+          const trueOwnerId = ownerDoc?._id ? ownerDoc._id.toString() : (dbRoom.ownerId?.toString() || "");
+          const trueOwnerFullName = ownerDoc?.fullName || ownerDoc?.username || "Room Host";
+          const trueOwnerUsername = ownerDoc?.username || "";
+
+          if (trueOwnerId && (!roomOwners.has(cleanRoomId) || !roomOwners.get(cleanRoomId)?.userId)) {
+            roomOwners.set(cleanRoomId, {
+              userId: trueOwnerId,
+              fullName: trueOwnerFullName,
+              username: trueOwnerUsername,
+              color: getUserColor(trueOwnerId)
+            });
+          }
+        }
+
         // Check if user is Host (owner of the room)
         const knownOwner = roomOwners.get(cleanRoomId);
         let role: "Host" | "Collaborator" = "Collaborator";
 
-        if (knownOwner) {
-          if (knownOwner.userId === userId || (username && knownOwner.username === username)) {
+        if (knownOwner && knownOwner.userId) {
+          if (userId && (knownOwner.userId === userId || (username && knownOwner.username === username))) {
             role = "Host";
+            knownOwner.fullName = fullName || knownOwner.fullName;
           } else {
             role = "Collaborator";
           }
+        } else if (dbRoom) {
+          // Room exists in DB, and this user is not the owner
+          role = "Collaborator";
+        } else if (payload.user?.role === "Collaborator" || payload.role === "Collaborator") {
+          role = "Collaborator";
         } else if (payload.user?.role === "Host" || payload.user?.fullName?.includes("(Host)")) {
           role = "Host";
-        } else if (payload.user?.role === "Collaborator") {
-          role = "Collaborator";
-        } else if (mongoose.connection.readyState === 1) {
-          try {
-            const room = await RoomModel.findOne({ roomId: cleanRoomId });
-            if (room && room.ownerId && room.ownerId.toString() === userId) {
-              role = "Host";
-            }
-          } catch {}
         } else if (!roomParticipants.has(cleanRoomId) || roomParticipants.get(cleanRoomId)!.size === 0) {
           role = "Host";
         }
@@ -252,19 +273,36 @@ export function setupCollabSocket(io: Server): void {
             try {
               const isValidObjId = mongoose.Types.ObjectId.isValid(userId) && userId.length === 24;
               const ownerObjId = isValidObjId ? new mongoose.Types.ObjectId(userId) : new mongoose.Types.ObjectId("000000000000000000000001");
-              RoomModel.findOneAndUpdate(
+              await RoomModel.findOneAndUpdate(
                 { roomId: cleanRoomId },
                 {
-                  roomId: cleanRoomId,
-                  name: payload.roomTitle || "Untitled Room",
-                  ownerId: ownerObjId,
+                  $set: {
+                    name: payload.roomTitle || "Untitled Room",
+                    updatedAt: new Date()
+                  },
                   $setOnInsert: {
+                    roomId: cleanRoomId,
+                    ownerId: ownerObjId,
                     authorizedMembers: [{ userId: ownerObjId, role: "owner", joinedAt: new Date() }],
                     accessSettings: { allowLinkJoin: true, defaultRole: "editor" }
                   }
                 },
                 { upsert: true }
               ).catch(() => {});
+            } catch {}
+          }
+        } else {
+          // Collaborator joined - ensure they are in authorizedMembers without modifying owner
+          if (mongoose.connection.readyState === 1) {
+            try {
+              const isValidObjId = mongoose.Types.ObjectId.isValid(userId) && userId.length === 24;
+              const memberObjId = isValidObjId ? new mongoose.Types.ObjectId(userId) : null;
+              if (memberObjId) {
+                await RoomModel.updateOne(
+                  { roomId: cleanRoomId, "authorizedMembers.userId": { $ne: memberObjId } },
+                  { $push: { authorizedMembers: { userId: memberObjId, role: "editor", joinedAt: new Date() } } }
+                ).catch(() => {});
+              }
             } catch {}
           }
         }
