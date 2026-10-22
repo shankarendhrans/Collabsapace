@@ -111,16 +111,16 @@ const DashboardPage: React.FC = () => {
     }
   };
 
-  // Clear all rooms the user joined as collaborator
-  const handleClearAllJoined = async () => {
+  // Clear all rooms from user's history (calls /rooms/clear-history)
+  const handleClearAllHistory = async (permanentDeleteOwned = false) => {
     try {
       setClearing(true);
-      const res = await api.post('/rooms/clear-joined');
-      showNotification(res.data.message || 'Successfully cleared all joined rooms.', 'success');
+      const res = await api.post('/rooms/clear-history', { permanentDeleteOwned });
+      showNotification(res.data.message || 'Successfully cleared room history.', 'success');
       setShowClearConfirm(false);
       await fetchRooms();
     } catch (err: any) {
-      showNotification(err?.response?.data?.error || 'Failed to clear joined rooms.', 'error');
+      showNotification(err?.response?.data?.error || 'Failed to clear room history.', 'error');
     } finally {
       setClearing(false);
     }
@@ -333,19 +333,19 @@ const DashboardPage: React.FC = () => {
               </p>
             </div>
 
-            {/* Action Bar: Clear Joined Rooms + Count */}
+            {/* Action Bar: Clear All Rooms + Count */}
             <div className="flex items-center gap-2.5 flex-wrap">
-              {joinedRooms.length > 0 && (
+              {rooms.length > 0 && (
                 <button
                   type="button"
-                  id="btnClearAllJoinedRooms"
+                  id="btnClearAllRooms"
                   onClick={() => setShowClearConfirm(true)}
                   disabled={clearing}
                   className="px-3.5 py-1.5 rounded-xl border border-red-500/40 bg-red-500/10 hover:bg-red-500/20 text-red-300 hover:text-red-200 text-xs font-semibold flex items-center gap-2 transition shadow-sm shadow-red-950/20 disabled:opacity-50"
-                  title="Leave and clear all rooms you have joined as a collaborator"
+                  title="Clear all rooms from your personal dashboard history"
                 >
                   <Trash2 className="w-3.5 h-3.5 text-red-400" />
-                  <span>Clear Joined Rooms ({joinedRooms.length})</span>
+                  <span>Clear All Rooms ({rooms.length})</span>
                 </button>
               )}
 
@@ -508,17 +508,17 @@ const DashboardPage: React.FC = () => {
                   <AlertTriangle className="w-5 h-5" />
                 </div>
                 <div className="space-y-1">
-                  <h3 className="text-base font-bold text-white">Clear All Joined Rooms</h3>
+                  <h3 className="text-base font-bold text-white">Clear All Rooms from Dashboard</h3>
                   <p className="text-xs text-slate-400 leading-relaxed">
-                    Are you sure you want to clear all <strong className="text-white">{joinedRooms.length} room{joinedRooms.length > 1 ? 's' : ''}</strong> you have joined?
+                    Are you sure you want to clear your room history (<strong className="text-white">{rooms.length} room{rooms.length > 1 ? 's' : ''}</strong>)?
                   </p>
                 </div>
               </div>
 
               <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-400 space-y-1.5">
-                <p>• You will be removed as a collaborator from each joined room.</p>
-                <p>• They will be removed from your Recently Accessed list.</p>
-                <p className="text-emerald-400">• Rooms created and owned by you will not be touched.</p>
+                <p>• Clears your personal dashboard history and recent rooms list.</p>
+                <p className="text-emerald-400">• Preserves shared document data for other active collaborators.</p>
+                <p>• You can always rejoin existing rooms via invite link.</p>
               </div>
 
               <div className="flex items-center justify-end gap-3 pt-2">
@@ -532,8 +532,8 @@ const DashboardPage: React.FC = () => {
                 </button>
                 <button
                   type="button"
-                  id="btnConfirmClearAllJoined"
-                  onClick={handleClearAllJoined}
+                  id="btnConfirmClearAllHistory"
+                  onClick={() => handleClearAllHistory(false)}
                   disabled={clearing}
                   className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white text-xs font-semibold shadow-md shadow-red-600/20 transition flex items-center gap-2 disabled:opacity-50"
                 >
@@ -542,7 +542,7 @@ const DashboardPage: React.FC = () => {
                   ) : (
                     <>
                       <Trash2 className="w-3.5 h-3.5" />
-                      <span>Yes, Clear All Joined Rooms</span>
+                      <span>Yes, Clear All Rooms</span>
                     </>
                   )}
                 </button>

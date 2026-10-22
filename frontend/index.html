@@ -558,15 +558,58 @@
             <p class="text-xs theme-muted">Reopen your persistent rooms or copy their invitation links</p>
           </div>
           <div class="flex items-center gap-2">
-            <button id="btnClearJoinedRooms" type="button" class="text-xs px-3 py-1.5 rounded-lg border border-red-500/40 bg-red-500/10 hover:bg-red-500/20 text-red-400 hover:text-red-300 font-semibold transition flex items-center gap-1.5 cursor-pointer shadow-sm shadow-red-950/20" title="Leave and clear all rooms you have joined as a collaborator">
+            <button id="btnClearAllRooms" type="button" class="text-xs px-3 py-1.5 rounded-lg border border-red-500/40 bg-red-500/10 hover:bg-red-500/20 text-red-400 hover:text-red-300 font-semibold transition flex items-center gap-1.5 cursor-pointer shadow-sm shadow-red-950/20" title="Clear all rooms from your personal dashboard history">
               <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M3 6h18"></path>
                 <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path>
                 <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path>
               </svg>
-              <span id="btnClearJoinedText">Clear Joined Rooms</span>
+              <span id="btnClearAllRoomsText">Clear All Rooms</span>
             </button>
             <span id="recentRoomsCount" class="text-xs font-mono px-2.5 py-1 rounded-lg theme-subtle border theme-border">0 Rooms</span>
+          </div>
+        </div>
+
+        <!-- Modal: Confirm Clear All Rooms -->
+        <div id="modalConfirmClearRooms" class="hidden fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <div class="theme-surface border theme-border rounded-3xl p-6 sm:p-7 max-w-md w-full shadow-2xl space-y-5 animate-in fade-in">
+            <div class="flex items-start gap-3.5">
+              <div class="w-10 h-10 rounded-2xl bg-red-500/10 border border-red-500/20 text-red-500 flex items-center justify-center shrink-0">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+              </div>
+              <div class="space-y-1">
+                <h3 class="text-base font-bold">Clear All Rooms</h3>
+                <p class="text-xs theme-muted leading-relaxed">
+                  Choose how you want to clear your room history:
+                </p>
+              </div>
+            </div>
+
+            <div class="space-y-2.5">
+              <label class="flex items-start gap-3 p-3 rounded-xl border theme-border theme-subtle cursor-pointer hover:border-blue-500/40">
+                <input type="radio" name="clearScopeOption" value="history" checked class="mt-0.5" />
+                <div class="text-xs space-y-0.5">
+                  <span class="font-bold block text-main">Clear Personal History Only (Recommended)</span>
+                  <span class="theme-muted block">Removes all rooms from your personal dashboard. Other active participants keep their shared room content.</span>
+                </div>
+              </label>
+              <label class="flex items-start gap-3 p-3 rounded-xl border border-red-500/20 bg-red-500/5 cursor-pointer hover:border-red-500/40">
+                <input type="radio" name="clearScopeOption" value="permanent" class="mt-0.5" />
+                <div class="text-xs space-y-0.5">
+                  <span class="font-bold block text-red-500">Permanently Delete Owned Rooms</span>
+                  <span class="theme-muted block">Permanently deletes all rooms you own from the server and MongoDB, and removes joined rooms from your dashboard.</span>
+                </div>
+              </label>
+            </div>
+
+            <div class="flex items-center justify-end gap-3 pt-2">
+              <button id="btnCancelClearAllRooms" type="button" class="px-4 py-2 rounded-xl border theme-border text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-800">
+                Cancel
+              </button>
+              <button id="btnConfirmClearAllRooms" type="button" class="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-semibold shadow-md transition flex items-center gap-1.5">
+                Confirm &amp; Clear History
+              </button>
+            </div>
           </div>
         </div>
 
@@ -1818,20 +1861,18 @@
         .filter(isUserInRoom)
         .sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
 
-      const joinedCount = roomList.filter(r => String(r.ownerId || "").trim() !== myId).length;
-
-      const btnClearJoined = document.getElementById("btnClearJoinedRooms");
-      const btnClearText = document.getElementById("btnClearJoinedText");
-      if (btnClearJoined) {
-        btnClearJoined.style.display = "inline-flex";
-        if (joinedCount > 0) {
-          btnClearJoined.style.opacity = "1";
-          btnClearJoined.style.pointerEvents = "auto";
-          if (btnClearText) btnClearText.textContent = `Clear Joined Rooms (${joinedCount})`;
+      const btnClearAll = document.getElementById("btnClearAllRooms");
+      const btnClearAllText = document.getElementById("btnClearAllRoomsText");
+      if (btnClearAll) {
+        btnClearAll.style.display = "inline-flex";
+        if (roomList.length > 0) {
+          btnClearAll.style.opacity = "1";
+          btnClearAll.style.pointerEvents = "auto";
+          if (btnClearAllText) btnClearAllText.textContent = `Clear All Rooms (${roomList.length})`;
         } else {
-          btnClearJoined.style.opacity = "0.45";
-          btnClearJoined.style.pointerEvents = "none";
-          if (btnClearText) btnClearText.textContent = "Clear Joined Rooms";
+          btnClearAll.style.opacity = "0.45";
+          btnClearAll.style.pointerEvents = "none";
+          if (btnClearAllText) btnClearAllText.textContent = "Clear All Rooms";
         }
       }
 
@@ -1864,7 +1905,12 @@
                   <span class="text-[11px] font-semibold px-2 py-0.5 rounded-full ${isOwner ? 'bg-blue-100 text-blue-800' : 'bg-emerald-100 text-emerald-800'}">
                     ${isOwner ? 'Owner' : (r.access === 'readonly' ? 'Read-Only' : 'Collaborator')}
                   </span>
-                  ${!isOwner ? `<button type="button" data-leave-room="${r.roomId}" class="text-[11px] px-2 py-0.5 rounded-full border border-red-200 dark:border-red-900/40 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 font-medium transition" title="Leave this room">Leave</button>` : ''}
+                  ${isOwner ? `
+                    <button type="button" data-delete-room="${r.roomId}" class="text-[11px] px-2 py-0.5 rounded-full border border-red-200 dark:border-red-900/40 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 font-medium transition" title="Permanently delete this room for all users">Delete</button>
+                    <button type="button" data-hide-room="${r.roomId}" class="text-[11px] px-2 py-0.5 rounded-full border theme-border theme-muted hover:text-white hover:bg-slate-700/40 font-medium transition" title="Hide this room from your personal dashboard">Hide</button>
+                  ` : `
+                    <button type="button" data-leave-room="${r.roomId}" class="text-[11px] px-2 py-0.5 rounded-full border border-red-200 dark:border-red-900/40 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 font-medium transition" title="Leave this room">Leave</button>
+                  `}
                 </div>
               </div>
               <h3 class="font-bold text-base truncate">${doc.title || r.name}</h3>
@@ -1894,25 +1940,63 @@
           copyToClipboard(getInviteUrl(rid), `Copied invite link for ${rid}`);
         });
       });
+      grid.querySelectorAll("[data-delete-room]").forEach(btn => {
+        btn.addEventListener("click", async () => {
+          const rid = btn.getAttribute("data-delete-room");
+          if (!rid) return;
+          if (confirm(`Permanently delete room ${rid}? This will permanently remove the room and notes for all participants.`)) {
+            const rooms = getRoomsDB();
+            const docs = getDocsDB();
+            delete rooms[rid];
+            delete docs[rid];
+            saveRoomsDB(rooms);
+            saveDocsDB(docs);
+
+            const token = (currentUser && currentUser.token) || localStorage.getItem("collabspace_token");
+            if (token) {
+              try {
+                await fetch(`${socketBaseUrl}/api/rooms/${rid}`, {
+                  method: "DELETE",
+                  headers: { Authorization: `Bearer ${token}` }
+                });
+              } catch {}
+            }
+            renderDashboard(true);
+            showToast(`Room ${rid} permanently deleted.`);
+          }
+        });
+      });
+      grid.querySelectorAll("[data-hide-room]").forEach(btn => {
+        btn.addEventListener("click", async () => {
+          const rid = btn.getAttribute("data-hide-room");
+          if (!rid) return;
+          if (confirm(`Remove room ${rid} from your dashboard? The shared room will remain available for other active participants.`)) {
+            const rooms = getRoomsDB();
+            delete rooms[rid];
+            saveRoomsDB(rooms);
+
+            const token = (currentUser && currentUser.token) || localStorage.getItem("collabspace_token");
+            if (token) {
+              try {
+                await fetch(`${socketBaseUrl}/api/rooms/${rid}/hide`, {
+                  method: "POST",
+                  headers: { Authorization: `Bearer ${token}` }
+                });
+              } catch {}
+            }
+            renderDashboard(true);
+            showToast(`Removed room ${rid} from dashboard.`);
+          }
+        });
+      });
       grid.querySelectorAll("[data-leave-room]").forEach(btn => {
         btn.addEventListener("click", async () => {
           const rid = btn.getAttribute("data-leave-room");
           if (!rid) return;
           if (confirm(`Leave room ${rid}? It will be removed from your dashboard.`)) {
             const rooms = getRoomsDB();
-            const r = rooms[rid];
-            if (r) {
-              if (Array.isArray(r.authorizedMembers)) {
-                r.authorizedMembers = r.authorizedMembers.filter(m => {
-                  const mid = typeof m === "object" && m !== null ? (m.userId || m.id || m._id) : m;
-                  return String(mid || "").trim() !== myId;
-                });
-              }
-              if (!r.authorizedMembers || r.authorizedMembers.length === 0) {
-                delete rooms[rid];
-              }
-              saveRoomsDB(rooms);
-            }
+            delete rooms[rid];
+            saveRoomsDB(rooms);
 
             const token = (currentUser && currentUser.token) || localStorage.getItem("collabspace_token");
             if (token) {
@@ -1938,64 +2022,112 @@
       }
     }
 
-    const btnClearJoinedElement = document.getElementById("btnClearJoinedRooms");
-    if (btnClearJoinedElement) {
-      btnClearJoinedElement.addEventListener("click", async () => {
+    const btnClearAllElement = document.getElementById("btnClearAllRooms");
+    const modalClearAll = document.getElementById("modalConfirmClearRooms");
+    const btnCancelClearAll = document.getElementById("btnCancelClearAllRooms");
+    const btnConfirmClearAll = document.getElementById("btnConfirmClearAllRooms");
+
+    if (btnClearAllElement && modalClearAll) {
+      btnClearAllElement.addEventListener("click", () => {
+        modalClearAll.classList.remove("hidden");
+      });
+    }
+    if (btnCancelClearAll && modalClearAll) {
+      btnCancelClearAll.addEventListener("click", () => {
+        modalClearAll.classList.add("hidden");
+      });
+    }
+    if (btnConfirmClearAll && modalClearAll) {
+      btnConfirmClearAll.addEventListener("click", async () => {
+        const selectedOption = document.querySelector('input[name="clearScopeOption"]:checked')?.value || "history";
+        const permanentDeleteOwned = selectedOption === "permanent";
+        btnConfirmClearAll.disabled = true;
+        btnConfirmClearAll.textContent = "Clearing...";
+
         const rooms = getRoomsDB();
+        const docs = getDocsDB();
         const myId = currentUser ? String(currentUser.id || currentUser.userId || currentUser._id || "").trim() : "";
-        let count = 0;
+
         Object.keys(rooms).forEach(rid => {
           const r = rooms[rid];
           const isMine = myId && String(r.ownerId || "").trim() === myId;
-          const isMember = isUserInRoom(r);
-          if (isMember && !isMine) {
-            if (Array.isArray(r.authorizedMembers)) {
-              r.authorizedMembers = r.authorizedMembers.filter(m => {
-                const mid = typeof m === "object" && m !== null ? (m.userId || m.id || m._id) : m;
-                return String(mid || "").trim() !== myId;
-              });
-            }
-            if (!r.authorizedMembers || r.authorizedMembers.length === 0) {
+          if (isMine) {
+            if (permanentDeleteOwned) {
+              delete rooms[rid];
+              delete docs[rid];
+            } else {
               delete rooms[rid];
             }
-            count++;
+          } else {
+            delete rooms[rid];
           }
         });
 
-        // Also sync clearing with backend MongoDB if logged in
         const token = (currentUser && currentUser.token) || localStorage.getItem("collabspace_token");
         if (token) {
           try {
-            await fetch(socketBaseUrl + "/api/rooms/clear-joined", {
+            await fetch(`${socketBaseUrl}/api/rooms/clear-history`, {
               method: "POST",
               headers: {
                 "Content-Type": "application/json",
                 "Authorization": `Bearer ${token}`
-              }
+              },
+              body: JSON.stringify({ permanentDeleteOwned })
             });
-          } catch {}
+          } catch (e) {
+            console.warn("[CollabSpace] Clear history API error:", e);
+          }
         }
 
         saveRoomsDB(rooms);
+        saveDocsDB(docs);
+        modalClearAll.classList.add("hidden");
+        btnConfirmClearAll.disabled = false;
+        btnConfirmClearAll.textContent = "Confirm & Clear History";
         renderDashboard(true);
-        if (count > 0) {
-          showToast(`Cleared ${count} joined room${count === 1 ? "" : "s"} from dashboard`);
-        } else {
-          showToast("All joined rooms cleared.");
-        }
+        showToast(permanentDeleteOwned ? "Owned rooms deleted & room history cleared." : "Cleared all rooms from your dashboard history.");
       });
     }
 
-    function createAndPersistRoom(name, description, access = "edit") {
-      const roomId = generateRoomCode();
+    async function createAndPersistRoom(name, description, access = "edit") {
+      const generatedId = generateRoomCode();
+      let finalRoomId = generatedId;
+      const token = (currentUser && currentUser.token) || localStorage.getItem("collabspace_token");
+      if (token) {
+        try {
+          const resp = await fetch(`${socketBaseUrl}/api/rooms`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${token}`
+            },
+            body: JSON.stringify({
+              roomId: generatedId,
+              name,
+              description: description || "Real-Time Collaborative Workspace",
+              defaultRole: access === "readonly" ? "viewer" : "editor"
+            })
+          });
+          if (resp.ok) {
+            const data = await resp.json();
+            if (data && data.room && data.room.roomId) {
+              finalRoomId = data.room.roomId;
+            }
+          }
+        } catch (e) {
+          console.warn("[CollabSpace] Backend room creation failed, falling back to local:", e);
+        }
+      }
+
       const now = new Date().toISOString();
       const rooms = getRoomsDB();
       const docs = getDocsDB();
 
-      rooms[roomId] = {
-        roomId,
+      rooms[finalRoomId] = {
+        roomId: finalRoomId,
+        id: finalRoomId,
         name,
-        description,
+        description: description || "Real-Time Collaborative Workspace",
         ownerId: currentUser.id,
         ownerName: currentUser.fullName,
         authorizedMembers: [currentUser.id],
@@ -2004,9 +2136,9 @@
         updatedAt: now
       };
 
-      docs[roomId] = {
-        documentId: "doc_" + roomId,
-        roomId,
+      docs[finalRoomId] = {
+        documentId: "doc_" + finalRoomId,
+        roomId: finalRoomId,
         title: name,
         contentHtml: `<h1>${name}</h1><p>${description || "Use this collaborative Notes Page to write notes while projecting reference PDFs, Word documents, or diagrams on the Reference File Page."}</p><h2>Quick Lecture &amp; Meeting Notes</h2><ul><li>Click <strong>Upload &amp; Project File</strong> to project any PDF, DOCX, Markdown, HTML, or Image in full visual layout</li><li>Switch to <strong>Split View (File + Notes)</strong> to teach or study with the reference file and notes side-by-side</li><li>Click <strong>Draw on Screen</strong> or <strong>Paint &amp; Sketchboard</strong> to draw with your cursor</li></ul>`,
         projectedFile: null,
@@ -2018,26 +2150,15 @@
       saveRoomsDB(rooms);
       saveDocsDB(docs);
 
-      if (currentUser?.token) {
-        fetch(`${socketBaseUrl}/api/rooms`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${currentUser.token}`
-          },
-          body: JSON.stringify({ name, description })
-        }).catch(() => {});
-      }
-
-      return roomId;
+      return finalRoomId;
     }
 
     let pendingPreviewRoomId = null;
-    document.getElementById("btnPreviewLinkOnly").addEventListener("click", () => {
+    document.getElementById("btnPreviewLinkOnly").addEventListener("click", async () => {
       const name = document.getElementById("inputRoomName").value.trim() || "Untitled Team Room";
       const desc = document.getElementById("inputRoomDesc").value.trim();
       const access = document.getElementById("inputRoomAccess").value;
-      pendingPreviewRoomId = createAndPersistRoom(name, desc, access);
+      pendingPreviewRoomId = await createAndPersistRoom(name, desc, access);
 
       const box = document.getElementById("createdRoomPreview");
       document.getElementById("previewRoomId").textContent = pendingPreviewRoomId;
@@ -2053,22 +2174,22 @@
       }
     });
 
-    document.getElementById("formCreateRoom").addEventListener("submit", (e) => {
+    document.getElementById("formCreateRoom").addEventListener("submit", async (e) => {
       e.preventDefault();
       const name = document.getElementById("inputRoomName").value.trim();
       const desc = document.getElementById("inputRoomDesc").value.trim();
       const access = document.getElementById("inputRoomAccess").value;
       if (!name) return;
 
-      const roomId = pendingPreviewRoomId || createAndPersistRoom(name, desc, access);
+      const roomId = pendingPreviewRoomId || (await createAndPersistRoom(name, desc, access));
       pendingPreviewRoomId = null;
       document.getElementById("createdRoomPreview").classList.add("hidden");
       document.getElementById("formCreateRoom").reset();
       openRoomInEditor(roomId);
     });
 
-    document.getElementById("btnQuickDemoRoom").addEventListener("click", () => {
-      const roomId = createAndPersistRoom(
+    document.getElementById("btnQuickDemoRoom").addEventListener("click", async () => {
+      const roomId = await createAndPersistRoom(
         "Distributed Systems Lecture & Live Notes",
         "Interactive session with projected reference file and cursor paint/sketch tools",
         "edit"
@@ -2180,7 +2301,24 @@
                   ...(currentUser && currentUser.id !== data.hostUser.userId ? [{ userId: currentUser.id, name: currentUser.fullName, color: "#10b981", role: "Collaborator" }] : [])
                 ]);
               }
-            }
+          }
+        } else if (resp.status === 404) {
+          if (currentRoomId === cleanRoomId && richTextEditor.innerHTML.includes("Connecting to shared workspace...")) {
+            suppressEditorBroadcast = true;
+            richTextEditor.innerHTML = `
+              <div class="p-6 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-center space-y-3 my-8">
+                <div class="text-base font-bold text-amber-500">Room ${cleanRoomId} Not Found on Server</div>
+                <p class="text-xs theme-muted max-w-md mx-auto">
+                  The host may have cleared or deleted this room, or the room ID is incorrect. Check your invitation link or return to the dashboard to launch a new room.
+                </p>
+                <div class="pt-2 flex justify-center gap-2">
+                  <button type="button" onclick="navigateTo('dashboard')" class="px-4 py-2 rounded-xl btn-accent text-white text-xs font-semibold">
+                    &larr; Return to Dashboard
+                  </button>
+                </div>
+              </div>
+            `;
+            suppressEditorBroadcast = false;
           }
         }
       } catch (e) {
@@ -2323,7 +2461,7 @@
           reconnectionAttempts: Infinity,
           reconnectionDelay: 1000,
           reconnectionDelayMax: 5000,
-          timeout: 20000
+          timeout: 45000
         });
 
         realtimeSocket.on("connect", () => {
@@ -2358,6 +2496,15 @@
             realtimeSocket.connect();
           }
           updateConnectionUI("Reconnecting");
+        });
+
+        realtimeSocket.on("room-deleted", (data) => {
+          if (!data || data.roomId !== currentRoomId) return;
+          showToast("Room has been deleted by the owner. Returning to dashboard...");
+          setTimeout(() => {
+            sessionStorage.removeItem("cs_active_room");
+            navigateTo("dashboard");
+          }, 1500);
         });
 
         // 1. Authoritative Deduplicated Participant List
@@ -2505,7 +2652,6 @@
         realtimeSocket.on("collaborator-joined", (data) => {
           if (data && data.user) {
             showToast(`${data.user.fullName || "Collaborator"} joined the room!`);
-            sendSocketJoinRoom();
           }
         });
 

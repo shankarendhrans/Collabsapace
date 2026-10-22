@@ -143,7 +143,26 @@ export function getRoomMemoryState(roomId: string) {
   };
 }
 
+let globalIo: Server | null = null;
+
+export function deleteRoomFromMemory(roomId: string) {
+  const clean = roomId.trim().toUpperCase();
+  roomOwners.delete(clean);
+  roomDocs.delete(clean);
+  roomYDocs.delete(clean);
+  roomParticipants.delete(clean);
+  roomVersions.delete(clean);
+  if (saveTimeouts.has(clean)) {
+    clearTimeout(saveTimeouts.get(clean)!);
+    saveTimeouts.delete(clean);
+  }
+  if (globalIo) {
+    globalIo.to(clean).emit("room-deleted", { roomId: clean });
+  }
+}
+
 export function setupCollabSocket(io: Server): void {
+  globalIo = io;
   io.on("connection", (socket: Socket) => {
     let currentRoomId: string | null = null;
     let currentUser: Participant | null = null;
@@ -164,7 +183,7 @@ export function setupCollabSocket(io: Server): void {
 
         if (token) {
           try {
-            const secret = process.env.JWT_SECRET || "collabspace_jwt_secret_dev_key_2026_a98b7c6d5e4f3a2b1c";
+            const secret = process.env.JWT_SECRET || "dev_fallback_secret_do_not_use_in_prod";
             const decoded = jwt.verify(token, secret) as any;
             if (decoded) {
               userId = decoded.userId || decoded.id || "";
@@ -263,21 +282,25 @@ export function setupCollabSocket(io: Server): void {
         }
 
         let docTitle = payload.roomTitle || "Untitled Document";
-        let docContent = payload.contentHtml || "<h1>" + cleanRoomId + "</h1><p>Start collaborating in real time...</p>";
+        const defaultDocContent = `<h1>${cleanRoomId}</h1><p>Start collaborating in real time...</p>`;
+        let docContent = defaultDocContent;
 
-        if (payload.contentHtml && role === "Host") {
-          docContent = payload.contentHtml;
-          docTitle = payload.roomTitle || docTitle;
-          roomDocs.set(cleanRoomId, { title: docTitle, htmlContent: docContent });
-        } else if (roomDocs.has(cleanRoomId)) {
+        const isPlaceholderText = (html?: string) => {
+          if (!html) return true;
+          return html.includes("Connecting to shared workspace...") ||
+                 html.includes("Connecting to server...") ||
+                 html.includes("Loading collaborative document");
+        };
+
+        if (roomDocs.has(cleanRoomId)) {
           const cached = roomDocs.get(cleanRoomId)!;
-          docTitle = cached.title;
+          docTitle = cached.title || docTitle;
           docContent = cached.htmlContent;
         } else if (mongoose.connection.readyState === 1) {
           try {
             const doc = await DocumentModel.findOne({ roomId: cleanRoomId });
             if (doc) {
-              docTitle = doc.title;
+              docTitle = doc.title || docTitle;
               docContent = doc.htmlContent;
               if (doc.crdtStateBase64) {
                 try {
@@ -288,6 +311,16 @@ export function setupCollabSocket(io: Server): void {
             }
           } catch {}
         }
+
+        if (payload.contentHtml && role === "Host" && !isPlaceholderText(payload.contentHtml)) {
+          docContent = payload.contentHtml;
+          docTitle = payload.roomTitle || docTitle;
+        }
+
+        if (isPlaceholderText(docContent)) {
+          docContent = defaultDocContent;
+        }
+
         roomDocs.set(cleanRoomId, { title: docTitle, htmlContent: docContent });
 
         const currentVersion = (roomVersions.get(cleanRoomId) || 0) + 1;

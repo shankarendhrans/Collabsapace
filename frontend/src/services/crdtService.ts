@@ -45,7 +45,7 @@ export class CollabCRDTProvider {
       reconnectionAttempts: Infinity,
       reconnectionDelay: 1000,
       reconnectionDelayMax: 5000,
-      timeout: 20000,
+      timeout: 45000,
     });
 
     this.socket.on('connect', () => {

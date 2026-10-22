@@ -277,15 +277,65 @@ async function runRealtimeIntegrationTests() {
     console.log("  ✓ Messages and participant updates completely isolated between rooms");
     console.log("  [PASS] TEST H — ROOM ISOLATION\n");
 
+    // -------------------------------------------------------------------------
+    // TEST I: PLACEHOLDER DOCUMENT PROTECTION
+    // -------------------------------------------------------------------------
+    console.log("[RUNNING] TEST I: Placeholder Document Protection...");
+    const ROOM_3 = "CS-PROTECT-TEST";
+    let clientInitDocContent = "";
+
+    const clientLateCollaborator = await createClient("Friend Collaborator");
+    clientLateCollaborator.on("init-document", (data) => {
+      clientInitDocContent = data.contentHtml;
+    });
+
+    // Client joins with a placeholder string as a collaborator
+    clientLateCollaborator.emit("join-room", {
+      roomId: ROOM_3,
+      contentHtml: "<h1>CS-PROTECT-TEST</h1><p>Connecting to shared workspace...</p>",
+      user: { id: "user-friend", fullName: "Friend", role: "Collaborator" }
+    });
+    await wait(200);
+
+    assert.strictEqual(
+      clientInitDocContent.includes("Connecting to shared workspace..."),
+      false,
+      "Collaborator join must NEVER poison room with placeholder content"
+    );
+    console.log("  ✓ Collaborator join did not poison room with placeholder content");
+    console.log("  [PASS] TEST I — PLACEHOLDER PROTECTION\n");
+
+    // -------------------------------------------------------------------------
+    // TEST J: ROOM DELETION BROADCAST
+    // -------------------------------------------------------------------------
+    console.log("[RUNNING] TEST J: Room Deletion Broadcast...");
+    let roomDeletedEventReceived = false;
+    clientLateCollaborator.on("room-deleted", (data) => {
+      if (data.roomId === ROOM_3) roomDeletedEventReceived = true;
+    });
+
+    const { deleteRoomFromMemory } = await import("../socket/collabSocket");
+    deleteRoomFromMemory(ROOM_3);
+    await wait(150);
+
+    assert.strictEqual(
+      roomDeletedEventReceived,
+      true,
+      "Participants must receive room-deleted event when owner deletes room"
+    );
+    console.log("  ✓ Participants notified via room-deleted event upon room deletion");
+    console.log("  [PASS] TEST J — ROOM DELETION BROADCAST\n");
+
     // Cleanup all clients
     clientA.disconnect();
     clientB.disconnect();
     clientC2.disconnect();
     clientD.disconnect();
     clientIsolated.disconnect();
+    clientLateCollaborator.disconnect();
 
     console.log("=======================================================");
-    console.log("  ALL TESTS PASSED SUCCESSFULLY! (TESTS A through H)");
+    console.log("  ALL TESTS PASSED SUCCESSFULLY! (TESTS A through J)");
     console.log("=======================================================\n");
 
     server.close();

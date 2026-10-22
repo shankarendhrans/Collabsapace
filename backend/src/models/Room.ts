@@ -14,6 +14,7 @@ export interface IRoom extends MongoDoc {
     allowLinkJoin: boolean;
     defaultRole: "editor" | "viewer";
   };
+  hiddenForUsers?: mongoose.Types.ObjectId[];
   createdAt: Date;
   updatedAt: Date;
 }
@@ -34,7 +35,8 @@ const RoomSchema = new Schema<IRoom>(
     accessSettings: {
       allowLinkJoin: { type: Boolean, default: true },
       defaultRole: { type: String, enum: ["editor", "viewer"], default: "editor" }
-    }
+    },
+    hiddenForUsers: [{ type: Schema.Types.ObjectId, ref: "User", default: [] }]
   },
   { timestamps: true }
 );

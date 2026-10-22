@@ -4,41 +4,72 @@ import mongoose from "mongoose";
 import { RoomModel } from "../models/Room";
 import { DocumentModel } from "../models/Document";
 import { requireAuth, optionalAuth, AuthRequest } from "../middleware/auth";
-import { getRoomMemoryState } from "../socket/collabSocket";
+import { getRoomMemoryState, deleteRoomFromMemory } from "../socket/collabSocket";
 
 const router = Router();
 
-// Helper to create room
+// Helper to create room (accepts client requested roomId if valid)
 async function handleCreateRoom(req: AuthRequest, res: Response) {
   try {
-    const { name, description, defaultRole } = req.body;
+    const { name, description, defaultRole, roomId: clientRoomId } = req.body;
     if (!name || !name.trim()) {
       res.status(400).json({ error: "Room name is required." });
       return;
     }
 
-    const roomId = "CS-" + crypto.randomBytes(3).toString("hex").toUpperCase();
-    const room = await RoomModel.create({
-      roomId,
-      name: name.trim(),
-      description: (description || "").trim(),
-      ownerId: req.user!.userId,
-      authorizedMembers: [{ userId: req.user!.userId as any, role: "owner", joinedAt: new Date() }],
-      accessSettings: {
-        allowLinkJoin: true,
-        defaultRole: defaultRole === "viewer" ? "viewer" : "editor"
-      }
-    });
+    let roomId = clientRoomId ? String(clientRoomId).trim().toUpperCase() : "";
+    if (!roomId || !/^CS-[A-Z0-9]{4,12}$/.test(roomId)) {
+      roomId = "CS-" + crypto.randomBytes(3).toString("hex").toUpperCase();
+    }
 
-    const doc = await DocumentModel.create({
-      roomId,
-      title: name.trim(),
-      htmlContent: `<h1>${name.trim()}</h1><p>${description ? description.trim() : "Start collaborating in real time..."}</p>`,
-      metadata: { wordCount: 6, charCount: 42, lastEditedBy: req.user!.fullName }
-    });
+    let ownerObjId: mongoose.Types.ObjectId;
+    try {
+      ownerObjId = new mongoose.Types.ObjectId(req.user!.userId);
+    } catch {
+      ownerObjId = new mongoose.Types.ObjectId("000000000000000000000001");
+    }
+
+    // Check if room with this roomId already exists
+    let room = await RoomModel.findOne({ roomId });
+    if (room) {
+      if (room.ownerId.toString() === req.user!.userId) {
+        room.name = name.trim();
+        if (description !== undefined) room.description = description.trim();
+        if (room.hiddenForUsers && room.hiddenForUsers.length > 0) {
+          room.hiddenForUsers = room.hiddenForUsers.filter(
+            (id) => id.toString() !== req.user!.userId
+          );
+        }
+        await room.save();
+      }
+    } else {
+      room = await RoomModel.create({
+        roomId,
+        name: name.trim(),
+        description: (description || "").trim(),
+        ownerId: ownerObjId,
+        authorizedMembers: [{ userId: ownerObjId, role: "owner", joinedAt: new Date() }],
+        accessSettings: {
+          allowLinkJoin: true,
+          defaultRole: defaultRole === "viewer" ? "viewer" : "editor"
+        },
+        hiddenForUsers: []
+      });
+    }
+
+    let doc = await DocumentModel.findOne({ roomId });
+    if (!doc) {
+      doc = await DocumentModel.create({
+        roomId,
+        title: name.trim(),
+        htmlContent: `<h1>${name.trim()}</h1><p>${description ? description.trim() : "Start collaborating in real time..."}</p>`,
+        metadata: { wordCount: 6, charCount: 42, lastEditedBy: req.user!.fullName }
+      });
+    }
 
     res.status(201).json({ room, document: doc });
   } catch (err) {
+    console.error("[roomRoutes] handleCreateRoom error:", err);
     res.status(500).json({ error: "Failed to create room." });
   }
 }
@@ -51,7 +82,7 @@ async function handleJoinRoom(identifier: string, req: AuthRequest, res: Respons
       return;
     }
 
-    const match = String(identifier).toUpperCase().match(/CS-[A-Z0-9]{4,10}/);
+    const match = String(identifier).toUpperCase().match(/CS-[A-Z0-9]{4,12}/);
     const cleanRoomId = match ? match[0] : String(identifier).trim().toUpperCase();
 
     const room = await RoomModel.findOne({ roomId: cleanRoomId });
@@ -59,6 +90,11 @@ async function handleJoinRoom(identifier: string, req: AuthRequest, res: Respons
       res.status(404).json({ error: `Room '${cleanRoomId}' was not found or is no longer available.` });
       return;
     }
+
+    let userObjId: mongoose.Types.ObjectId | null = null;
+    try {
+      userObjId = new mongoose.Types.ObjectId(req.user!.userId);
+    } catch {}
 
     const isMember = room.authorizedMembers.some(
       (m) => m.userId.toString() === req.user!.userId
@@ -69,7 +105,7 @@ async function handleJoinRoom(identifier: string, req: AuthRequest, res: Respons
         return;
       }
       room.authorizedMembers.push({
-        userId: req.user!.userId as any,
+        userId: (userObjId || req.user!.userId) as any,
         role: room.accessSettings.defaultRole,
         joinedAt: new Date()
       });
@@ -126,6 +162,90 @@ router.post("/clear-joined", requireAuth, async (req: AuthRequest, res: Response
   }
 });
 
+// Clear personal room history (preserves shared rooms for other users unless permanentDeleteOwned is true)
+router.post("/clear-history", requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.user!.userId;
+    const { permanentDeleteOwned } = req.body;
+    let userObjId: mongoose.Types.ObjectId | null = null;
+    try {
+      userObjId = new mongoose.Types.ObjectId(userId);
+    } catch {}
+
+    const userIds: any[] = userObjId ? [userObjId, userId] : [userId];
+
+    // 1. Remove user from all joined rooms
+    const joinedResult = await RoomModel.updateMany(
+      {
+        ownerId: { $nin: userIds },
+        "authorizedMembers.userId": { $in: userIds }
+      },
+      {
+        $pull: { authorizedMembers: { userId: { $in: userIds } } }
+      }
+    );
+
+    // 2. Handle owned rooms
+    if (permanentDeleteOwned) {
+      const ownedRooms = await RoomModel.find({ ownerId: { $in: userIds } });
+      for (const r of ownedRooms) {
+        deleteRoomFromMemory(r.roomId);
+      }
+      await RoomModel.deleteMany({ ownerId: { $in: userIds } });
+      await DocumentModel.deleteMany({ roomId: { $in: ownedRooms.map((r) => r.roomId) } });
+    } else {
+      if (userObjId) {
+        await RoomModel.updateMany(
+          { ownerId: { $in: userIds } },
+          { $addToSet: { hiddenForUsers: userObjId } }
+        );
+      }
+    }
+
+    res.json({
+      success: true,
+      message: permanentDeleteOwned
+        ? "Permanently deleted your owned rooms and cleared personal room history."
+        : "Successfully cleared all rooms from your personal dashboard history.",
+      clearedJoinedCount: joinedResult.modifiedCount
+    });
+  } catch (err) {
+    console.error("[roomRoutes] Error in /clear-history:", err);
+    res.status(500).json({ error: "Failed to clear room history." });
+  }
+});
+
+// Hide single room from user's dashboard history
+router.post("/:roomId/hide", requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const { roomId } = req.params;
+    const cleanRoomId = roomId.trim().toUpperCase();
+    const userId = req.user!.userId;
+    let userObjId: mongoose.Types.ObjectId | null = null;
+    try {
+      userObjId = new mongoose.Types.ObjectId(userId);
+    } catch {}
+
+    const userIds: any[] = userObjId ? [userObjId, userId] : [userId];
+
+    await RoomModel.updateOne(
+      { roomId: cleanRoomId, ownerId: { $nin: userIds } },
+      { $pull: { authorizedMembers: { userId: { $in: userIds } } } }
+    );
+
+    if (userObjId) {
+      await RoomModel.updateOne(
+        { roomId: cleanRoomId, ownerId: { $in: userIds } },
+        { $addToSet: { hiddenForUsers: userObjId } }
+      );
+    }
+
+    res.json({ success: true, message: `Removed ${cleanRoomId} from dashboard history.` });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to hide room from history." });
+  }
+});
+
 router.post("/join", requireAuth, async (req: AuthRequest, res: Response) => {
   await handleJoinRoom(req.body.roomIdentifier, req, res);
 });
@@ -154,7 +274,7 @@ router.post("/:roomId/leave", requireAuth, async (req: AuthRequest, res: Respons
     }
 
     if (room.ownerId.toString() === userId) {
-      res.status(400).json({ error: "Room owners cannot leave their own room. You can delete it instead." });
+      res.status(400).json({ error: "Room owners cannot leave their own room. You can delete it or hide it from history." });
       return;
     }
 
@@ -169,7 +289,7 @@ router.post("/:roomId/leave", requireAuth, async (req: AuthRequest, res: Respons
   }
 });
 
-// Delete an owned room
+// Delete an owned room permanently
 router.delete("/:roomId", requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const { roomId } = req.params;
@@ -186,6 +306,8 @@ router.delete("/:roomId", requireAuth, async (req: AuthRequest, res: Response) =
       res.status(403).json({ error: "Only the room owner can delete this room." });
       return;
     }
+
+    deleteRoomFromMemory(cleanRoomId);
 
     await RoomModel.deleteOne({ roomId: cleanRoomId });
     await DocumentModel.deleteOne({ roomId: cleanRoomId });
@@ -204,16 +326,20 @@ router.get("/recent", requireAuth, async (req: AuthRequest, res: Response) => {
       userObjId = new mongoose.Types.ObjectId(userId);
     } catch {}
 
-    const matchConditions: any[] = [{ ownerId: userId }];
-    if (userObjId) {
-      matchConditions.push({ ownerId: userObjId });
-      matchConditions.push({ "authorizedMembers.userId": userObjId });
-    }
-    matchConditions.push({ "authorizedMembers.userId": userId });
+    const userIds: any[] = userObjId ? [userObjId, userId] : [userId];
 
-    const rooms = await RoomModel.find({ $or: matchConditions })
+    const matchConditions: any[] = [
+      { ownerId: { $in: userIds } },
+      { "authorizedMembers.userId": { $in: userIds } }
+    ];
+
+    const rooms = await RoomModel.find({
+      $or: matchConditions,
+      hiddenForUsers: { $nin: userIds }
+    })
       .sort({ updatedAt: -1 })
-      .limit(30);
+      .limit(40);
+
     res.json({ rooms });
   } catch (err) {
     res.status(500).json({ error: "Unable to load recent rooms." });
