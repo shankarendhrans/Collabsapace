@@ -23,8 +23,14 @@ router.post("/register", authRateLimiter, async (req: Request, res: Response) =>
       return;
     }
 
+    const cleanEmail = email.toLowerCase().trim();
+    const cleanUsername = username.toLowerCase().trim();
     const existingUser = await UserModel.findOne({
-      $or: [{ email: email.toLowerCase().trim() }, { username: username.trim() }]
+      $or: [
+        { email: cleanEmail },
+        { username: cleanUsername },
+        { username: new RegExp(`^${cleanUsername.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, "i") }
+      ]
     });
     if (existingUser) {
       res.status(409).json({ error: "An account with that email or username already exists." });
@@ -36,8 +42,8 @@ router.post("/register", authRateLimiter, async (req: Request, res: Response) =>
 
     const newUser = await UserModel.create({
       fullName: fullName.trim(),
-      email: email.toLowerCase().trim(),
-      username: username.trim(),
+      email: cleanEmail,
+      username: cleanUsername,
       passwordHash
     });
 
@@ -72,8 +78,13 @@ router.post("/login", authRateLimiter, async (req: Request, res: Response) => {
     }
 
     const cleanId = identifier.trim();
+    const escaped = cleanId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const user = await UserModel.findOne({
-      $or: [{ email: cleanId.toLowerCase() }, { username: cleanId }]
+      $or: [
+        { email: cleanId.toLowerCase() },
+        { username: cleanId.toLowerCase() },
+        { username: new RegExp(`^${escaped}$`, "i") }
+      ]
     });
     if (!user) {
       res.status(401).json({ error: "Invalid credentials. Please check your email/username and password." });
@@ -105,6 +116,39 @@ router.post("/login", authRateLimiter, async (req: Request, res: Response) => {
     });
   } catch (err) {
     res.status(500).json({ error: "Login failed due to a server error." });
+  }
+});
+
+router.post("/reset-password", authRateLimiter, async (req: Request, res: Response) => {
+  try {
+    const { identifier, newPassword } = req.body;
+    if (!identifier || !newPassword) {
+      res.status(400).json({ error: "Email/username and new password are required." });
+      return;
+    }
+    if (newPassword.length < 8) {
+      res.status(400).json({ error: "New password must be at least 8 characters long." });
+      return;
+    }
+    const cleanId = identifier.trim();
+    const escaped = cleanId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const user = await UserModel.findOne({
+      $or: [
+        { email: cleanId.toLowerCase() },
+        { username: cleanId.toLowerCase() },
+        { username: new RegExp(`^${escaped}$`, "i") }
+      ]
+    });
+    if (!user) {
+      res.status(404).json({ error: "No account found with that email or username." });
+      return;
+    }
+    const salt = await bcrypt.genSalt(12);
+    user.passwordHash = await bcrypt.hash(newPassword, salt);
+    await user.save();
+    res.json({ message: "Password updated successfully. You can now log in." });
+  } catch (err) {
+    res.status(500).json({ error: "Unable to reset password at this time." });
   }
 });
 

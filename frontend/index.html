@@ -71,9 +71,18 @@
       border-color: var(--border-main);
     }
 
+    button, input[type="submit"], input[type="button"], select, [role="button"] {
+      cursor: pointer;
+    }
+    button:disabled, input[type="submit"]:disabled {
+      cursor: not-allowed;
+      opacity: 0.65;
+    }
+
     .btn-accent {
       background-color: var(--accent);
       color: #ffffff;
+      cursor: pointer;
     }
     .btn-accent:hover {
       background-color: var(--accent-hover);
@@ -382,6 +391,13 @@
             <button type="submit" class="w-full py-2.5 px-4 rounded-xl btn-accent font-semibold text-sm shadow-md transition">
               Update Password
             </button>
+
+            <div class="pt-2 border-t theme-border flex items-center justify-between text-xs theme-muted">
+              <span>Remembered your credentials?</span>
+              <button type="button" id="linkResetToLogin" class="font-semibold text-blue-600 hover:underline">
+                Back to Log In &rarr;
+              </button>
+            </div>
           </form>
         </div>
       </div>
@@ -1263,23 +1279,26 @@
         try {
           if (key === "cs_active_user" || key === "collabspace_token") {
             const sess = sessionStorage.getItem(key);
-            if (sess) return JSON.parse(sess);
+            if (sess) {
+              try { return JSON.parse(sess); } catch { return sess; }
+            }
             const raw = localStorage.getItem(key);
             if (raw) {
               sessionStorage.setItem(key, raw);
-              return JSON.parse(raw);
+              try { return JSON.parse(raw); } catch { return raw; }
             }
             return fallback;
           }
           const raw = localStorage.getItem(key);
-          return raw ? JSON.parse(raw) : fallback;
+          if (!raw) return fallback;
+          try { return JSON.parse(raw); } catch { return raw; }
         } catch {
           return fallback;
         }
       },
       set(key, value) {
         try {
-          const serialized = JSON.stringify(value);
+          const serialized = typeof value === "object" && value !== null ? JSON.stringify(value) : String(value);
           if (key === "cs_active_user" || key === "collabspace_token") {
             sessionStorage.setItem(key, serialized);
           }
@@ -1506,19 +1525,23 @@
       formRegister.classList.add("hidden");
       formReset.classList.add("hidden");
 
-      document.getElementById("authTabLogin").className = "flex-1 py-2 rounded-lg text-xs sm:text-sm font-semibold transition theme-muted";
-      document.getElementById("authTabRegister").className = "flex-1 py-2 rounded-lg text-xs sm:text-sm font-semibold transition theme-muted";
-      document.getElementById("authTabReset").className = "px-3 py-2 rounded-lg text-xs font-medium transition theme-muted";
+      const tabLogin = document.getElementById("authTabLogin");
+      const tabReg = document.getElementById("authTabRegister");
+      const tabReset = document.getElementById("authTabReset");
+
+      if (tabLogin) tabLogin.className = "flex-1 py-2 rounded-lg text-xs sm:text-sm font-semibold transition theme-muted cursor-pointer hover:opacity-90";
+      if (tabReg) tabReg.className = "flex-1 py-2 rounded-lg text-xs sm:text-sm font-semibold transition theme-muted cursor-pointer hover:opacity-90";
+      if (tabReset) tabReset.className = "px-3 py-2 rounded-lg text-xs font-medium transition theme-muted cursor-pointer hover:opacity-90";
 
       if (mode === "login") {
         formLogin.classList.remove("hidden");
-        document.getElementById("authTabLogin").className = "flex-1 py-2 rounded-lg text-xs sm:text-sm font-semibold transition btn-accent shadow-sm";
+        if (tabLogin) tabLogin.className = "flex-1 py-2 rounded-lg text-xs sm:text-sm font-semibold transition btn-accent shadow-sm cursor-pointer";
       } else if (mode === "register") {
         formRegister.classList.remove("hidden");
-        document.getElementById("authTabRegister").className = "flex-1 py-2 rounded-lg text-xs sm:text-sm font-semibold transition btn-accent shadow-sm";
+        if (tabReg) tabReg.className = "flex-1 py-2 rounded-lg text-xs sm:text-sm font-semibold transition btn-accent shadow-sm cursor-pointer";
       } else {
         formReset.classList.remove("hidden");
-        document.getElementById("authTabReset").className = "px-3 py-2 rounded-lg text-xs font-semibold transition btn-accent shadow-sm";
+        if (tabReset) tabReset.className = "px-3 py-2 rounded-lg text-xs font-semibold transition btn-accent shadow-sm cursor-pointer";
       }
     }
 
@@ -1528,6 +1551,10 @@
     document.getElementById("linkToRegister").addEventListener("click", () => switchAuthMode("register"));
     document.getElementById("linkToLogin").addEventListener("click", () => switchAuthMode("login"));
     document.getElementById("btnSwitchToReset").addEventListener("click", () => switchAuthMode("reset"));
+    const linkResetToLogin = document.getElementById("linkResetToLogin");
+    if (linkResetToLogin) {
+      linkResetToLogin.addEventListener("click", () => switchAuthMode("login"));
+    }
 
     document.getElementById("btnToggleLoginPwd").addEventListener("click", (e) => {
       const inp = document.getElementById("loginPassword");
@@ -1556,7 +1583,7 @@
       lbl.textContent = score >= 70 ? "Strong password ready." : "Use at least 8 characters with letters and numbers.";
     });
 
-    async function attemptFetchWithTimeout(url, options, timeoutMs = 30000) {
+    async function attemptFetchWithTimeout(url, options, timeoutMs = 15000) {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
@@ -1587,86 +1614,89 @@
       const originalText = btnSubmit ? btnSubmit.innerHTML : "";
       if (btnSubmit) {
         btnSubmit.disabled = true;
-        btnSubmit.innerHTML = `<span>Saving to MongoDB Atlas...</span>`;
+        btnSubmit.innerHTML = `<span>Saving account...</span>`;
       }
 
       let backendUser = null;
       let token = "";
 
-      // 1. Save directly into MongoDB via Backend API with auto-retry
       try {
-        let resp;
+        // 1. Save directly into MongoDB via Backend API
         try {
-          resp = await attemptFetchWithTimeout(socketBaseUrl + "/api/auth/register", {
+          const resp = await attemptFetchWithTimeout(socketBaseUrl + "/api/auth/register", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ fullName, email, username, password, confirmPassword: confirm })
-          }, 25000);
-        } catch (firstErr) {
-          if (btnSubmit) btnSubmit.innerHTML = `<span>Connecting to database server...</span>`;
-          await new Promise(r => setTimeout(r, 1500));
-          resp = await attemptFetchWithTimeout(socketBaseUrl + "/api/auth/register", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ fullName, email, username, password, confirmPassword: confirm })
-          }, 25000);
-        }
+          }, 15000);
 
-        const data = await resp.json();
-        if (!resp.ok) {
-          if (btnSubmit) { btnSubmit.disabled = false; btnSubmit.innerHTML = originalText; }
-          if (resp.status === 409 || (data.error && data.error.includes("already exists"))) {
-            switchAuthMode("login");
-            const idInput = document.getElementById("loginIdentifier");
-            if (idInput) idInput.value = username || email;
-            return showAuthFeedback("An account with this email/username already exists! Please enter your password to sign in.");
+          const data = await resp.json().catch(() => ({}));
+          if (resp.ok && data.user) {
+            backendUser = data.user;
+            token = data.token || "";
+          } else if (resp.status === 409 || (data.error && data.error.includes("already exists"))) {
+            showAuthFeedback("An account with this email/username already exists! Switching to Log In...", false);
+            setTimeout(() => {
+              switchAuthMode("login");
+              const idInput = document.getElementById("loginIdentifier");
+              if (idInput) idInput.value = username || email;
+            }, 1200);
+            return;
+          } else if (!resp.ok) {
+            return showAuthFeedback(data.error || "Registration failed. Please check your credentials.");
           }
-          return showAuthFeedback(data.error || "Registration failed. Please check your credentials.");
+        } catch (networkErr) {
+          console.warn("[CollabSpace] Cloud registration offline or timed out, fallback to local workspace:", networkErr);
         }
-        backendUser = data.user;
-        token = data.token;
-      } catch (networkErr) {
-        console.warn("[CollabSpace] Cloud registration unreachable, fallback to local workspace:", networkErr);
-      }
 
-      // 2. Keep local mirror for instantaneous operations
-      const users = getUsersDB();
-      const passwordHash = await hashPassword(password, email);
-      const userId = backendUser?.id || backendUser?._id || ("usr_" + Date.now());
-      const newUser = { id: userId, fullName, email, username, passwordHash, token, createdAt: new Date().toISOString() };
-      const existingIdx = users.findIndex(u => u.email === email || u.username === username);
-      if (existingIdx >= 0) {
-        users[existingIdx] = newUser;
-      } else {
-        users.push(newUser);
-      }
-      saveUsersDB(users);
+        // 2. Keep local mirror for instantaneous operations
+        const users = getUsersDB();
+        const passwordHash = await hashPassword(password, email);
+        const userId = String(backendUser?.id || backendUser?._id || ("usr_" + Date.now())).trim();
+        const newUser = { id: userId, userId, fullName, email, username, passwordHash, token, createdAt: new Date().toISOString() };
+        const existingIdx = users.findIndex(u => (u.email && u.email.toLowerCase() === email) || (u.username && u.username.toLowerCase() === username));
+        if (existingIdx >= 0) {
+          users[existingIdx] = newUser;
+        } else {
+          users.push(newUser);
+        }
+        saveUsersDB(users);
 
-      currentUser = { id: userId, fullName, email, username, token };
-      StorageService.set("cs_active_user", currentUser);
-      if (token) localStorage.setItem("collabspace_token", token);
+        currentUser = { id: userId, userId, fullName, email, username, token };
+        StorageService.set("cs_active_user", currentUser);
+        if (token) {
+          localStorage.setItem("collabspace_token", token);
+          sessionStorage.setItem("collabspace_token", token);
+        }
 
-      if (btnSubmit) { btnSubmit.disabled = false; btnSubmit.innerHTML = originalText; }
-      if (backendUser) {
-        showToast(`Account successfully created & saved in MongoDB Atlas! Welcome, ${fullName}!`);
-      } else {
-        showToast(`Account created in local workspace! Welcome, ${fullName}!`);
-      }
-      const pendingRoomReg = localStorage.getItem("cs_pending_room");
-      if (pendingRoomReg) {
-        localStorage.removeItem("cs_pending_room");
-        ensureRoomExistsLocally(pendingRoomReg);
-        openRoomInEditor(pendingRoomReg);
-      } else {
-        navigateTo("dashboard");
+        if (backendUser) {
+          showToast(`Account successfully created & saved in MongoDB Atlas! Welcome, ${fullName}!`);
+        } else {
+          showToast(`Account created in local workspace! Welcome, ${fullName}!`);
+        }
+        const pendingRoomReg = localStorage.getItem("cs_pending_room");
+        if (pendingRoomReg) {
+          localStorage.removeItem("cs_pending_room");
+          ensureRoomExistsLocally(pendingRoomReg);
+          openRoomInEditor(pendingRoomReg);
+        } else {
+          navigateTo("dashboard");
+        }
+      } finally {
+        if (btnSubmit) {
+          btnSubmit.disabled = false;
+          btnSubmit.innerHTML = originalText;
+        }
       }
     });
 
     formLogin.addEventListener("submit", async (e) => {
       e.preventDefault();
-      const identifier = document.getElementById("loginIdentifier").value.trim().toLowerCase();
+      const rawIdentifier = document.getElementById("loginIdentifier").value.trim();
       const password = document.getElementById("loginPassword").value;
       const remember = document.getElementById("loginRemember").checked;
+
+      if (!rawIdentifier) return showAuthFeedback("Please enter your email or username.");
+      if (!password) return showAuthFeedback("Please enter your password.");
 
       const btnSubmit = formLogin.querySelector("button[type='submit']");
       const originalText = btnSubmit ? btnSubmit.innerHTML : "";
@@ -1678,86 +1708,135 @@
       let backendUser = null;
       let token = "";
 
-      // 1. Authenticate against MongoDB on Backend API with auto-retry
       try {
-        let resp;
+        // 1. Authenticate against MongoDB on Backend API
         try {
-          resp = await attemptFetchWithTimeout(socketBaseUrl + "/api/auth/login", {
+          const resp = await attemptFetchWithTimeout(socketBaseUrl + "/api/auth/login", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ identifier, password, rememberMe: remember })
-          }, 25000);
-        } catch (firstErr) {
-          if (btnSubmit) btnSubmit.innerHTML = `<span>Connecting to database server...</span>`;
-          await new Promise(r => setTimeout(r, 1500));
-          resp = await attemptFetchWithTimeout(socketBaseUrl + "/api/auth/login", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ identifier, password, rememberMe: remember })
-          }, 25000);
+            body: JSON.stringify({ identifier: rawIdentifier, password, rememberMe: remember })
+          }, 15000);
+
+          const data = await resp.json().catch(() => ({}));
+          if (resp.ok && data.user) {
+            backendUser = data.user;
+            token = data.token || "";
+          } else if (resp.status === 401 || resp.status === 400) {
+            return showAuthFeedback(data.error || "Invalid credentials. Please check your email/username and password.");
+          }
+        } catch (networkErr) {
+          console.warn("[CollabSpace] Backend login offline, attempting local mirror:", networkErr);
         }
 
-        const data = await resp.json();
-        if (resp.ok && data.user) {
-          backendUser = data.user;
-          token = data.token;
-        } else if (resp.status === 401 || resp.status === 400) {
-          if (btnSubmit) { btnSubmit.disabled = false; btnSubmit.innerHTML = originalText; }
-          return showAuthFeedback(data.error || "Invalid credentials. Please check your email/username and password.");
+        // 2. Set Active User
+        if (backendUser) {
+          const uid = String(backendUser.id || backendUser._id || "").trim();
+          currentUser = {
+            id: uid,
+            userId: uid,
+            fullName: backendUser.fullName || rawIdentifier,
+            email: backendUser.email || "",
+            username: backendUser.username || rawIdentifier,
+            token
+          };
+        } else {
+          // Fallback to local storage credentials if backend is asleep
+          const users = getUsersDB();
+          const cleanId = rawIdentifier.toLowerCase();
+          const found = users.find(u => 
+            (u.email && u.email.toLowerCase() === cleanId) || 
+            (u.username && u.username.toLowerCase() === cleanId)
+          );
+          if (!found) {
+            return showAuthFeedback("No registered account found with that email or username. Please check your credentials or register.");
+          }
+          const candidateHash = await hashPassword(password, found.email);
+          if (candidateHash !== found.passwordHash) {
+            return showAuthFeedback("Invalid password. Please try again.");
+          }
+          const uid = String(found.id || found.userId || "").trim();
+          currentUser = { 
+            id: uid, 
+            userId: uid, 
+            fullName: found.fullName || rawIdentifier, 
+            email: found.email || "", 
+            username: found.username || rawIdentifier,
+            token: found.token || ""
+          };
         }
-      } catch (networkErr) {
-        console.warn("[CollabSpace] Backend login offline, attempting local mirror:", networkErr);
-      }
 
-      if (btnSubmit) { btnSubmit.disabled = false; btnSubmit.innerHTML = originalText; }
+        StorageService.set("cs_active_user", currentUser);
+        if (token) {
+          localStorage.setItem("collabspace_token", token);
+          sessionStorage.setItem("collabspace_token", token);
+        }
 
-      // 2. Set Active User
-      if (backendUser) {
-        currentUser = {
-          id: backendUser.id || backendUser._id,
-          fullName: backendUser.fullName,
-          email: backendUser.email,
-          username: backendUser.username,
-          token
-        };
-      } else {
-        // Fallback to local storage credentials if backend is asleep
-        const users = getUsersDB();
-        const found = users.find(u => u.email === identifier || u.username === identifier);
-        if (!found) return showAuthFeedback("No registered account found with that email or username. Please register first.");
-        const candidateHash = await hashPassword(password, found.email);
-        if (candidateHash !== found.passwordHash) return showAuthFeedback("Invalid password. Please try again.");
-        currentUser = { id: found.id, fullName: found.fullName, email: found.email, username: found.username };
-      }
-
-      StorageService.set("cs_active_user", currentUser);
-      if (token) localStorage.setItem("collabspace_token", token);
-
-      showToast(`Signed in as ${currentUser.fullName}`);
-      const pendingRoomLog = localStorage.getItem("cs_pending_room");
-      if (pendingRoomLog) {
-        localStorage.removeItem("cs_pending_room");
-        ensureRoomExistsLocally(pendingRoomLog);
-        openRoomInEditor(pendingRoomLog);
-      } else {
-        navigateTo("dashboard");
+        showToast(`Signed in as ${currentUser.fullName}`);
+        const pendingRoomLog = localStorage.getItem("cs_pending_room");
+        if (pendingRoomLog) {
+          localStorage.removeItem("cs_pending_room");
+          ensureRoomExistsLocally(pendingRoomLog);
+          openRoomInEditor(pendingRoomLog);
+        } else {
+          navigateTo("dashboard");
+        }
+      } finally {
+        if (btnSubmit) {
+          btnSubmit.disabled = false;
+          btnSubmit.innerHTML = originalText;
+        }
       }
     });
 
     formReset.addEventListener("submit", async (e) => {
       e.preventDefault();
-      const identifier = document.getElementById("resetIdentifier").value.trim().toLowerCase();
+      const identifier = document.getElementById("resetIdentifier").value.trim();
       const newPwd = document.getElementById("resetNewPassword").value;
       if (newPwd.length < 8) return showAuthFeedback("New password must be at least 8 characters.");
 
-      const users = getUsersDB();
-      const idx = users.findIndex(u => u.email === identifier || u.username === identifier);
-      if (idx === -1) return showAuthFeedback("Account not found.");
+      const btnSubmit = formReset.querySelector("button[type='submit']");
+      const originalText = btnSubmit ? btnSubmit.innerHTML : "";
+      if (btnSubmit) {
+        btnSubmit.disabled = true;
+        btnSubmit.innerHTML = "<span>Updating password...</span>";
+      }
 
-      users[idx].passwordHash = await hashPassword(newPwd, users[idx].email);
-      saveUsersDB(users);
-      showAuthFeedback("Password updated! You can now sign in.", false);
-      setTimeout(() => switchAuthMode("login"), 1200);
+      try {
+        let backendUpdated = false;
+        try {
+          const resp = await attemptFetchWithTimeout(socketBaseUrl + "/api/auth/reset-password", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ identifier, newPassword: newPwd })
+          }, 12000);
+          if (resp.ok) backendUpdated = true;
+        } catch {}
+
+        const users = getUsersDB();
+        const cleanId = identifier.toLowerCase();
+        const idx = users.findIndex(u => 
+          (u.email && u.email.toLowerCase() === cleanId) || 
+          (u.username && u.username.toLowerCase() === cleanId)
+        );
+        if (idx >= 0) {
+          users[idx].passwordHash = await hashPassword(newPwd, users[idx].email);
+          saveUsersDB(users);
+        } else if (!backendUpdated) {
+          return showAuthFeedback("Account not found with that email or username.");
+        }
+
+        showAuthFeedback("Password updated! Switching to log in...", false);
+        setTimeout(() => {
+          switchAuthMode("login");
+          const idInput = document.getElementById("loginIdentifier");
+          if (idInput) idInput.value = identifier;
+        }, 1200);
+      } finally {
+        if (btnSubmit) {
+          btnSubmit.disabled = false;
+          btnSubmit.innerHTML = originalText;
+        }
+      }
     });
 
     // =========================================================================
@@ -1846,11 +1925,19 @@
     }
 
     function renderDashboard(skipBackendSync = false) {
-      if (!currentUser) return;
-      document.getElementById("welcomeUserName").textContent = currentUser.fullName;
-      document.getElementById("dashUserName").textContent = currentUser.fullName;
-      document.getElementById("dashUserEmail").textContent = currentUser.email;
-      document.getElementById("dashUserAvatar").textContent = currentUser.fullName.charAt(0).toUpperCase();
+      if (!currentUser) {
+        navigateTo("auth");
+        return;
+      }
+      const safeName = currentUser.fullName || currentUser.username || "User";
+      const welcomeEl = document.getElementById("welcomeUserName");
+      if (welcomeEl) welcomeEl.textContent = safeName;
+      const nameEl = document.getElementById("dashUserName");
+      if (nameEl) nameEl.textContent = safeName;
+      const emailEl = document.getElementById("dashUserEmail");
+      if (emailEl) emailEl.textContent = currentUser.email || "";
+      const avatarEl = document.getElementById("dashUserAvatar");
+      if (avatarEl) avatarEl.textContent = (safeName.charAt(0) || "U").toUpperCase();
 
       const roomsMap = getRoomsDB();
       const docsMap = getDocsDB();
@@ -2301,6 +2388,7 @@
                   ...(currentUser && currentUser.id !== data.hostUser.userId ? [{ userId: currentUser.id, name: currentUser.fullName, color: "#10b981", role: "Collaborator" }] : [])
                 ]);
               }
+            }
           }
         } else if (resp.status === 404) {
           if (currentRoomId === cleanRoomId && richTextEditor.innerHTML.includes("Connecting to shared workspace...")) {

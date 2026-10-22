@@ -16,7 +16,7 @@ const UserSchema = new Schema<IUser>(
   {
     fullName: { type: String, required: true, trim: true, maxlength: 100 },
     email: { type: String, required: true, unique: true, lowercase: true, trim: true },
-    username: { type: String, required: true, unique: true, trim: true, minlength: 3, maxlength: 40 },
+    username: { type: String, required: true, unique: true, lowercase: true, trim: true, minlength: 3, maxlength: 40 },
     passwordHash: { type: String, required: true },
     preferences: {
       theme: { type: String, enum: ["light", "dark", "color"], default: "light" },
