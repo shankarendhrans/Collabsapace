@@ -167,7 +167,7 @@ export function setupCollabSocket(io: Server): void {
     let currentRoomId: string | null = null;
     let currentUser: Participant | null = null;
 
-    socket.on("join-room", async (payload: { roomId: string; roomTitle?: string; contentHtml?: string; user?: any; token?: string }) => {
+    socket.on("join-room", async (payload: { roomId: string; roomTitle?: string; contentHtml?: string; user?: any; token?: string; role?: string }) => {
       try {
         const { roomId, token } = payload;
         if (!roomId) return;
